@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Training &amp; Capacity Building — TIMONA Geospatial and Surveying</title>
+<meta name="description" content="Practical, assessed training in land surveying, GNSS, total station work, GIS, drone mapping and remote sensing. In-house cohorts, open enrolment and online delivery, with certification on completion." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon.png">
+<style>
+  /* ---- page-specific ---- */
+  nav.links a.active{color:var(--accent)}
+  .page-hero{position:relative;overflow:hidden;padding:clamp(2.6rem,5vw,4.2rem) 0 clamp(2.6rem,5vw,4rem);border-bottom:1px solid var(--line)}
+  .page-hero::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(760px 420px at 82% 8%,rgba(57,217,138,.16),transparent 62%),
+               radial-gradient(620px 400px at 4% 92%,rgba(255,184,107,.08),transparent 60%);
+  }
+  .page-hero .wrap{position:relative;max-width:920px}
+  .crumbs{font-size:.76rem;color:#7d949c;letter-spacing:.04em;margin-bottom:1.4rem}
+  .crumbs a:hover{color:var(--accent)}
+  .crumbs span{opacity:.5;padding:0 .45rem}
+  .page-hero h1{font-size:clamp(2.1rem,4.6vw,3.5rem);margin:1.1rem 0 1.2rem}
+  .page-hero h1 em{font-style:normal;background:linear-gradient(100deg,var(--accent),#8ff0bd 60%,var(--sand));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .page-hero .actions{display:flex;gap:.7rem;flex-wrap:wrap;margin-top:2rem}
+
+  .facts{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+  .fact{background:var(--ink-2);padding:1.5rem 1.3rem}
+  .fact small{display:block;font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .fact b{display:block;margin-top:.35rem;font-family:var(--font-d);font-size:1rem;font-weight:500;letter-spacing:-.01em}
+
+  .courses{display:grid;grid-template-columns:repeat(3,1fr);gap:1.1rem}
+  .course{
+    position:relative;display:flex;flex-direction:column;
+    background:linear-gradient(170deg,rgba(14,42,51,.72),rgba(8,24,30,.5));
+    border:1px solid var(--line);border-radius:var(--radius);padding:1.6rem 1.5rem;
+    transition:border-color .3s,transform .3s;
+  }
+  .course:hover{border-color:rgba(57,217,138,.4);transform:translateY(-4px)}
+  .course .cico{width:46px;height:46px;display:block;border-radius:11px;background:#fff;padding:4px;margin-bottom:.95rem;box-shadow:0 8px 18px -10px rgba(0,0,0,.65)}
+  .course .cat{font-size:.66rem;letter-spacing:.17em;text-transform:uppercase;color:var(--sand);font-weight:600}
+  .course h3{font-size:1.06rem;margin:.7rem 0 .55rem;line-height:1.3}
+  .course p{color:var(--muted);font-size:.88rem;font-weight:300;line-height:1.6}
+  .course-meta{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:1rem}
+  .course-meta span{
+    font-size:.7rem;letter-spacing:.03em;padding:.22rem .6rem;border-radius:6px;
+    background:rgba(255,255,255,.045);border:1px solid var(--line);color:#b6c9ce;
+  }
+  .course ul{list-style:none;padding:0;margin:1.05rem 0 0;display:grid;gap:.4rem}
+  .course li{position:relative;padding-left:1.05rem;font-size:.83rem;color:#a9bfc4;font-weight:300;line-height:1.5}
+  .course li::before{content:"";position:absolute;left:0;top:.52em;width:5px;height:5px;border-radius:50%;border:1px solid var(--accent)}
+
+  .modes{display:grid;grid-template-columns:repeat(3,1fr);gap:1.1rem}
+  .mode{border:1px solid var(--line);border-radius:var(--radius);padding:1.6rem 1.5rem;background:rgba(11,33,41,.4);transition:.3s}
+  .mode:hover{background:rgba(14,42,51,.75);border-color:var(--line-strong)}
+  .mode h3{font-size:1rem;margin-bottom:.5rem}
+  .mode p{color:var(--muted);font-size:.87rem;font-weight:300}
+  .mode .best{margin-top:1rem;font-size:.76rem;letter-spacing:.04em;color:#9ec9b6}
+
+  .included{display:grid;grid-template-columns:1fr 1fr;gap:.55rem 2.2rem;list-style:none;padding:0;margin:1.8rem 0 0}
+  .included li{display:flex;gap:.65rem;font-size:.9rem;color:#c9dcdd;font-weight:300;line-height:1.5}
+  .included li::before{content:"\2713";color:var(--accent);font-weight:700;flex:none}
+
+  .faq{display:grid;gap:.6rem;max-width:860px}
+  .faq details{border:1px solid var(--line);border-radius:12px;background:rgba(11,33,41,.42);padding:1.05rem 1.3rem;transition:border-color .25s}
+  .faq details[open]{border-color:rgba(57,217,138,.32);background:rgba(14,42,51,.6)}
+  .faq summary{cursor:pointer;font-family:var(--font-d);font-size:.97rem;list-style:none;display:flex;justify-content:space-between;gap:1rem;align-items:center}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::after{content:"+";color:var(--accent);font-size:1.15rem;flex:none;transition:transform .25s}
+  .faq details[open] summary::after{content:"\2013"}
+  .faq p{margin-top:.8rem;color:var(--muted);font-size:.9rem;font-weight:300;line-height:1.6}
+
+  .enquire{display:grid;grid-template-columns:.92fr 1.08fr;gap:clamp(2rem,4.5vw,3.4rem)}
+  .enquire .c-card small{display:block;font-size:.7rem;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:.15rem}
+  .enquire .c-card b{font-family:var(--font-d);font-weight:500;font-size:.95rem}
+
+  @media (max-width:1024px){
+    .courses{grid-template-columns:repeat(2,1fr)}
+    .modes{grid-template-columns:1fr}
+    .facts{grid-template-columns:repeat(2,1fr)}
+    .enquire{grid-template-columns:1fr}
+  }
+  @media (max-width:720px){
+    .courses{grid-template-columns:1fr}
+    .included{grid-template-columns:1fr}
+  }
+</style>
+<!-- domain-meta:start -->
+<link rel="canonical" href="https://timonageospatialsurvey.com/training.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="TIMONA Geospatial and Surveying">
+<meta property="og:title" content="Training &amp; Capacity Building — TIMONA Geospatial and Surveying">
+<meta property="og:description" content="Practical, assessed training in land surveying, GNSS, total station work, GIS, drone mapping and remote sensing. In-house cohorts, open enrolment and online delivery, with certification on completion.">
+<meta property="og:url" content="https://timonageospatialsurvey.com/training.html">
+<meta property="og:image" content="https://timonageospatialsurvey.com/img/land-survey.jpg">
+<meta property="og:image:alt" content="Survey team with a total station">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Training &amp; Capacity Building — TIMONA Geospatial and Surveying">
+<meta name="twitter:description" content="Practical, assessed training in land surveying, GNSS, total station work, GIS, drone mapping and remote sensing. In-house cohorts, open enrolment and online delivery, with certification on completion.">
+<meta name="twitter:image" content="https://timonageospatialsurvey.com/img/land-survey.jpg">
+<!-- domain-meta:end -->
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="wrap">
+    <div class="topbar-l">
+      <a href="tel:+251914564405"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg>+251 914 564 405</a>
+      <a href="mailto:info@timonageospatialsurvey.com"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg>info@timonageospatialsurvey.com</a>
+    </div>
+    <div class="topbar-r">
+      <a href="#" aria-label="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5ZM3 9h4v12H3V9Zm7 0h3.8v1.7h.05c.53-1 1.83-2.05 3.77-2.05C21.4 8.65 22 11 22 14.1V21h-4v-6.1c0-1.5-.03-3.4-2.1-3.4-2.1 0-2.4 1.6-2.4 3.3V21h-4V9Z"/></svg></a>
+      <a href="#" aria-label="Facebook"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 9h3V6h-3c-2.2 0-4 1.8-4 4v2H7v3h3v7h3v-7h3l1-3h-4v-2c0-.6.4-1 1-1Z"/></svg></a>
+      <a href="#" aria-label="X"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.9 2H22l-7 8 8.2 12h-6.4l-5-7.3L5.9 22H2.8l7.5-8.6L2.4 2h6.6l4.5 6.7L18.9 2Zm-1.1 18h1.7L7.1 3.7H5.3L17.8 20Z"/></svg></a>
+    </div>
+  </div>
+</div>
+
+<!-- NAV -->
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a href="index.html" class="brand">
+      <div class="mark">
+        <img src="img/logo-mark.png" alt="TIMONA logo" width="512" height="512" decoding="async">
+      </div>
+      <div class="brand-name">TIMONA<span>Geospatial and Surveying</span></div>
+    </a>
+    <nav class="links">
+      <a href="index.html" class="nav-ico"><img src="img/icons/nav-home.png" alt="" width="18" height="18">Home</a>
+      <a href="index.html#services">Services</a>
+      <a href="sitetrackerpro.html">SiteTrackerPro</a>
+      <a href="index.html#sectors">Sectors</a>
+      <a href="index.html#projects">Projects</a>
+      <a href="index.html#gallery">Gallery</a>
+      <a href="training.html" class="active" aria-current="page">Training</a>
+      <a href="index.html#about">About</a>
+      <a href="index.html#contact" class="nav-ico"><img src="img/icons/nav-contact.png" alt="" width="18" height="18">Contact</a>
+    </nav>
+    <div class="nav-cta">
+      <a href="#enquire" class="btn btn-primary">Request a Proposal
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <button class="burger" id="burger" aria-label="Menu" aria-expanded="false"><span></span></button>
+    </div>
+  </div>
+  <div class="mobile-menu" id="mobileMenu">
+    <div class="wrap">
+      <a href="index.html"><img src="img/icons/nav-home.png" alt="" width="19" height="19">Home</a>
+      <a href="index.html#services">Services</a>
+      <a href="sitetrackerpro.html">SiteTrackerPro</a>
+      <a href="index.html#sectors">Sectors</a>
+      <a href="index.html#projects">Projects</a>
+      <a href="index.html#gallery">Gallery</a>
+      <a href="training.html">Training</a>
+      <a href="index.html#about">About</a>
+      <a href="index.html#contact"><img src="img/icons/nav-contact.png" alt="" width="19" height="19">Contact</a>
+      <a href="#enquire" class="btn btn-primary">Request a Proposal</a>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- HERO -->
+  <section class="page-hero">
+    <div class="grid-bg"></div>
+    <div class="wrap">
+      <p class="crumbs"><a href="index.html">Home</a><span>/</span>Training &amp; Capacity Building</p>
+      <span class="eyebrow">Training &amp; capacity building</span>
+      <h1>Training that leaves the <em>capability behind.</em></h1>
+      <p class="lede">Most geospatial projects fail months after handover, when the team that received the data can't maintain it. Our courses fix that — practical, assessed, and taught by the surveyors and analysts who do the work.</p>
+      <div class="actions">
+        <a href="#courses" class="btn btn-primary">View courses
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+        <a href="#enquire" class="btn btn-ghost">Request a proposal</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- FACTS -->
+  <div class="facts">
+    <div class="fact"><small>Delivery</small><b>In-house, open or online</b></div>
+    <div class="fact"><small>Cohort size</small><b>6 – 20 participants</b></div>
+    <div class="fact"><small>Assessment</small><b>Practical + written</b></div>
+    <div class="fact"><small>Certificate</small><b>On completion</b></div>
+  </div>
+
+  <!-- COURSES -->
+  <section class="sec" id="courses">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Course catalogue</span>
+        <h2>Nine courses. Field-first, not slide-first.</h2>
+        <p class="lede">Every course runs on real data and real instruments. Participants leave with a workbook, a dataset pack and work they produced themselves — not a certificate for sitting still.</p>
+      </div>
+
+      <div class="courses">
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/land-surveying.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">Surveying</span>
+          <h3>Practical Land Surveying &amp; Setting Out</h3>
+          <p>For technicians and site engineers who need to run their own fieldwork, from control to setting out.</p>
+          <div class="course-meta"><span>5 days</span><span>Foundation</span><span>Field + office</span></div>
+          <ul>
+            <li>Establish and check survey control</li>
+            <li>Set out buildings, roads and services</li>
+            <li>Keep field records that survive an audit</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/remote-sensing.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">Surveying</span>
+          <h3>GNSS &amp; RTK Field Procedures</h3>
+          <p>Getting reliable coordinates out of satellite positioning, and knowing when the fix is lying to you.</p>
+          <div class="course-meta"><span>3 days</span><span>Intermediate</span><span>Field</span></div>
+          <ul>
+            <li>Configure base stations and rovers</li>
+            <li>Quality indicators, redundancy and re-observation</li>
+            <li>Multipath, canopy and coordinate systems</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/topographic.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">Surveying</span>
+          <h3>Total Station &amp; Traverse Computation</h3>
+          <p>Close a traverse with an acceptable misclosure and reduce observations with confidence.</p>
+          <div class="course-meta"><span>4 days</span><span>Foundation</span><span>Field + office</span></div>
+          <ul>
+            <li>Angular and linear misclosure</li>
+            <li>Adjustment, reduction and coordinate lists</li>
+            <li>Common sources of systematic error</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/cadastral.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">Land administration</span>
+          <h3>Cadastral Survey &amp; Land Administration</h3>
+          <p>Boundary definition, parcel fabric and record management for land offices and registries.</p>
+          <div class="course-meta"><span>5 days</span><span>Intermediate</span><span>Classroom + field</span></div>
+          <ul>
+            <li>Boundary evidence and reinstatement</li>
+            <li>Parcel numbering and record schemas</li>
+            <li>Handling conflicting and overlapping records</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/gis-analysis.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">GIS</span>
+          <h3>GIS Fundamentals with QGIS</h3>
+          <p>The entry point for teams starting from spreadsheets and CAD drawings with no GIS in place.</p>
+          <div class="course-meta"><span>5 days</span><span>Foundation</span><span>Computer lab</span></div>
+          <ul>
+            <li>Projections, layers and attributes</li>
+            <li>Digitising, editing and topology checks</li>
+            <li>Map layouts that print correctly</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/nav-gis.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">GIS</span>
+          <h3>ArcGIS Pro &amp; Enterprise GIS</h3>
+          <p>For organisations standardising on Esri — from single projects to a shared, governed system.</p>
+          <div class="course-meta"><span>5 days</span><span>Intermediate</span><span>Computer lab</span></div>
+          <ul>
+            <li>Geodatabase design and domains</li>
+            <li>Publishing layers and web maps</li>
+            <li>Versioning, permissions and workflow</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/drone-surveys.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">Remote sensing</span>
+          <h3>Drone Mapping &amp; Photogrammetry</h3>
+          <p>Plan a flight, capture it legally and turn it into an orthomosaic and terrain model you can trust.</p>
+          <div class="course-meta"><span>3 days</span><span>Intermediate</span><span>Field + office</span></div>
+          <ul>
+            <li>Flight planning, GCPs and overlap</li>
+            <li>Processing to ortho, DSM and point cloud</li>
+            <li>Accuracy checking and deliverables</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/nav-projects.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">Data</span>
+          <h3>Spatial Data Management &amp; Geodatabases</h3>
+          <p>For teams whose data has outgrown folders — schemas, quality control and repeatable pipelines.</p>
+          <div class="course-meta"><span>4 days</span><span>Intermediate</span><span>Computer lab</span></div>
+          <ul>
+            <li>Schema design and data dictionaries</li>
+            <li>Validation, cleaning and QA routines</li>
+            <li>Metadata and backup discipline</li>
+          </ul>
+        </article>
+
+        <article class="course reveal">
+          <img class="cico" src="img/icons/environmental.png" alt="" width="46" height="46" loading="lazy">
+          <span class="cat">Remote sensing</span>
+          <h3>Remote Sensing &amp; Land-Cover Classification</h3>
+          <p>Satellite and aerial imagery turned into defensible land-cover statistics and change maps.</p>
+          <div class="course-meta"><span>4 days</span><span>Advanced</span><span>Computer lab</span></div>
+          <ul>
+            <li>Image pre-processing and indices</li>
+            <li>Supervised classification and accuracy assessment</li>
+            <li>Time-series change detection</li>
+          </ul>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- DELIVERY MODES -->
+  <section class="sec process" id="delivery">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">How courses are delivered</span>
+        <h2>Three ways to run it</h2>
+        <p class="lede">Same curriculum and the same instructors — pick the format that fits your team's calendar and budget.</p>
+      </div>
+      <div class="modes">
+        <div class="mode reveal">
+          <h3>In-house at your office</h3>
+          <p>We bring the instruments and datasets to you, and teach on your own projects where the data allows. The most effective option for a team working to one standard.</p>
+          <p class="best">Best for: utilities, county teams, contractors</p>
+        </div>
+        <div class="mode reveal">
+          <h3>Open enrolment cohorts</h3>
+          <p>Scheduled courses at our training room, with participants from several organisations. Cost-effective for one or two people at a time.</p>
+          <p class="best">Best for: individuals and small teams</p>
+        </div>
+        <div class="mode reveal">
+          <h3>Online &amp; blended</h3>
+          <p>Theory and software modules delivered live online, with an optional field weekend for practical assessment where geography allows.</p>
+          <p class="best">Best for: distributed teams</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHAT'S INCLUDED -->
+  <section class="sec">
+    <div class="wrap">
+      <div class="why">
+        <div class="reveal">
+          <span class="eyebrow">What each participant gets</span>
+          <h2 style="margin:1rem 0 1rem">More than a week in a classroom</h2>
+          <p class="lede">Courses are assessed, documented and reported back to management, so the investment is visible and the skills are traceable.</p>
+          <ul class="included">
+            <li>Printed workbook and exercise set</li>
+            <li>Dataset pack to keep after the course</li>
+            <li>Instruments supplied for field modules</li>
+            <li>Practical and written assessment</li>
+            <li>Certificate of completion with grade</li>
+            <li>30 days of follow-up support by email</li>
+            <li>Course report to your management</li>
+            <li>Option to align to your CPD framework</li>
+          </ul>
+        </div>
+
+        <div class="faq reveal">
+          <details open>
+            <summary>Can you train at our office?</summary>
+            <p>Yes. In-house delivery is our most requested format. We travel with total stations, GNSS receivers and levels, and only need a room, power and a site we can work on nearby.</p>
+          </details>
+          <details>
+            <summary>What is the minimum group size?</summary>
+            <p>Six participants for in-house courses, with a maximum of twenty so that everyone gets hands on the instruments. Smaller groups can join an open enrolment cohort.</p>
+          </details>
+          <details>
+            <summary>Do participants need prior experience?</summary>
+            <p>Foundation courses assume none — we start from the instrument and the coordinate system. Intermediate and advanced courses state their prerequisites on the course sheet we send with the proposal.</p>
+          </details>
+          <details>
+            <summary>Is the certificate recognised?</summary>
+            <p>It is a certificate of competence issued by us against the assessment record, and it can be aligned to your institution's CPD or internal training framework. We do not claim accreditation we do not hold.</p>
+          </details>
+          <details>
+            <summary>How far in advance should we book?</summary>
+            <p>Four to six weeks for in-house courses so we can tailor exercises to your data. Open enrolment places can usually be confirmed within a week.</p>
+          </details>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ENQUIRE -->
+  <section class="sec" id="enquire" style="padding-top:0">
+    <div class="wrap">
+      <div class="enquire">
+        <div class="reveal">
+          <span class="eyebrow">Request a proposal</span>
+          <h2 style="margin:1rem 0 1rem">Tell us who needs training</h2>
+          <p class="lede">Send the course, the number of participants and roughly when you'd like to run it. You'll get a proposal with the course outline, prerequisites, schedule and cost — usually within two working days.</p>
+          <div class="contact-cards">
+            <div class="c-card">
+              <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg></div>
+              <div><small>Training desk</small><b><a href="tel:+251914564405">+251 914 564 405</a></b></div>
+            </div>
+            <div class="c-card">
+              <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg></div>
+              <div><small>Email</small><b><a href="mailto:training@timonageospatialsurvey.com">training@timonageospatialsurvey.com</a></b></div>
+            </div>
+          </div>
+        </div>
+
+        <form class="reveal" action="mailto:training@timonageospatialsurvey.com" method="post" enctype="text/plain">
+          <h3>Training enquiry</h3>
+          <p>Fields marked * are required.</p>
+          <div class="row2">
+            <div class="field"><label for="tname">Your name *</label><input id="tname" name="name" type="text" required placeholder="Jane Mwangi"></div>
+            <div class="field"><label for="torg">Organisation *</label><input id="torg" name="organisation" type="text" required placeholder="Company or agency"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label for="temail">Email *</label><input id="temail" name="email" type="email" required placeholder="you@company.com"></div>
+            <div class="field"><label for="tphone">Phone</label><input id="tphone" name="phone" type="tel" placeholder="+251 ..."></div>
+          </div>
+          <div class="field">
+            <label for="tcourse">Course of interest *</label>
+            <select id="tcourse" name="course" required>
+              <option value="" disabled selected>Select a course</option>
+              <option>Practical Land Surveying &amp; Setting Out</option>
+              <option>GNSS &amp; RTK Field Procedures</option>
+              <option>Total Station &amp; Traverse Computation</option>
+              <option>Cadastral Survey &amp; Land Administration</option>
+              <option>GIS Fundamentals with QGIS</option>
+              <option>ArcGIS Pro &amp; Enterprise GIS</option>
+              <option>Drone Mapping &amp; Photogrammetry</option>
+              <option>Spatial Data Management &amp; Geodatabases</option>
+              <option>Remote Sensing &amp; Land-Cover Classification</option>
+              <option>Not sure yet — advise me</option>
+            </select>
+          </div>
+          <div class="row2">
+            <div class="field"><label for="tpart">Participants</label>
+              <select id="tpart" name="participants">
+                <option>1 – 5</option>
+                <option>6 – 10</option>
+                <option>11 – 20</option>
+                <option>More than 20</option>
+              </select>
+            </div>
+            <div class="field"><label for="twhen">Preferred timing</label>
+              <select id="twhen" name="timing">
+                <option>As soon as possible</option>
+                <option>Within 1 month</option>
+                <option>1 – 3 months</option>
+                <option>Just budgeting for now</option>
+              </select>
+            </div>
+          </div>
+          <div class="field"><label for="tnotes">Anything else we should know</label><textarea id="tnotes" name="notes" placeholder="Existing skills, equipment available, location, or a specific problem the team needs to solve."></textarea></div>
+          <button type="submit" class="btn btn-primary">Send enquiry
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+          <p class="form-note">This form opens your email app with the details filled in.</p>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="f-grid">
+      <div class="f-col">
+        <a href="index.html" class="brand">
+          <div class="mark">
+            <img src="img/logo-mark.png" alt="TIMONA logo" width="512" height="512" decoding="async">
+          </div>
+          <div class="brand-name">TIMONA<span>Geospatial and Surveying</span></div>
+        </a>
+        <p class="brand-tag">Mapping Tomorrow, Today</p>
+        <p>Licensed surveying and geospatial practice delivering ground truth, spatial intelligence and the systems to use them.</p>
+        <div class="socials">
+          <a href="#" aria-label="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5ZM3 9h4v12H3V9Zm7 0h3.8v1.7h.05c.53-1 1.83-2.05 3.77-2.05C21.4 8.65 22 11 22 14.1V21h-4v-6.1c0-1.5-.03-3.4-2.1-3.4-2.1 0-2.4 1.6-2.4 3.3V21h-4V9Z"/></svg></a>
+          <a href="#" aria-label="Facebook"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 9h3V6h-3c-2.2 0-4 1.8-4 4v2H7v3h3v7h3v-7h3l1-3h-4v-2c0-.6.4-1 1-1Z"/></svg></a>
+          <a href="#" aria-label="X"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.9 2H22l-7 8 8.2 12h-6.4l-5-7.3L5.9 22H2.8l7.5-8.6L2.4 2h6.6l4.5 6.7L18.9 2Zm-1.1 18h1.7L7.1 3.7H5.3L17.8 20Z"/></svg></a>
+        </div>
+      </div>
+
+      <div class="f-col">
+        <h4>Services</h4>
+        <ul>
+          <li><a href="index.html#services">Land &amp; cadastral survey</a></li>
+          <li><a href="index.html#services">Engineering survey</a></li>
+          <li><a href="index.html#services">GIS &amp; data management</a></li>
+          <li><a href="index.html#services">Remote sensing</a></li>
+          <li><a href="index.html#services">LiDAR &amp; UAV mapping</a></li>
+          <li><a href="training.html">Training</a></li>
+        </ul>
+      </div>
+
+      <div class="f-col">
+        <h4>Company</h4>
+        <ul>
+          <li><a href="index.html"><img class="fli" src="img/icons/nav-home.png" alt="" width="15" height="15">Home</a></li>
+          <li><a href="index.html#about">About us</a></li>
+          <li><a href="sitetrackerpro.html">SiteTrackerPro</a></li>
+          <li><a href="index.html#projects">Projects</a></li>
+          <li><a href="index.html#gallery">Gallery</a></li>
+          <li><a href="index.html#deliverables">Deliverables</a></li>
+          <li><a href="index.html#process">How we work</a></li>
+          <li><a href="index.html#contact"><img class="fli" src="img/icons/nav-contact.png" alt="" width="15" height="15">Contact</a></li>
+        </ul>
+      </div>
+
+      <div class="f-col">
+        <h4>Working hours</h4>
+        <div class="hours"><span>Monday – Friday</span><b>8:00 – 17:00</b></div>
+        <div class="hours"><span>Saturday</span><b>9:00 – 13:00</b></div>
+        <div class="hours"><span>Sunday</span><b>Closed</b></div>
+        <h4 style="margin-top:1.6rem">Training desk</h4>
+        <div class="hours"><b>training@timonageospatialsurvey.com</b></div>
+      </div>
+    </div>
+
+    <div class="f-bottom">
+      <span>© <span id="year">2026</span> TIMONA Geospatial and Surveying. All rights reserved.</span>
+      <span><a href="#">Privacy</a> · <a href="#">Terms</a> · <a href="#">Data policy</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var nav = document.getElementById('nav');
+  var burger = document.getElementById('burger');
+  var menu = document.getElementById('mobileMenu');
+
+  var onScroll = function(){ nav.classList.toggle('scrolled', window.scrollY > 12); };
+  onScroll();
+  window.addEventListener('scroll', onScroll, {passive:true});
+
+  burger.addEventListener('click', function(){
+    var open = menu.classList.toggle('open');
+    burger.classList.toggle('open', open);
+    burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  menu.querySelectorAll('a').forEach(function(a){
+    a.addEventListener('click', function(){
+      menu.classList.remove('open');
+      burger.classList.remove('open');
+      burger.setAttribute('aria-expanded','false');
+    });
+  });
+
+  document.getElementById('year').textContent = new Date().getFullYear();
+
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var items = document.querySelectorAll('.reveal');
+  if (reduce || !('IntersectionObserver' in window)){
+    items.forEach(function(el){ el.classList.add('in'); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){
+          var i = Array.prototype.indexOf.call(items, e.target);
+          e.target.style.transitionDelay = Math.min(i % 4, 3) * 70 + 'ms';
+          e.target.classList.add('in');
+          io.unobserve(e.target);
+        }
+      });
+    }, {threshold:.12, rootMargin:'0px 0px -40px 0px'});
+    items.forEach(function(el){ io.observe(el); });
+  }
+})();
+</script>
+</body>
+</html>

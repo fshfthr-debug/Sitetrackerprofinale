@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SiteTrackerPro — Interactive demo | TIMONA Geospatial and Surveying</title>
+<meta name="description" content="Interactive demo of SiteTrackerPro: construction tracking with cut and fill volumes from survey data, Ethiopian standard materials and bills of quantities, three-factor delivery fraud scoring and progress history." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+<link rel="icon" type="image/png" sizes="64x64" href="../img/favicon.png">
+<!-- domain-meta:start -->
+<link rel="canonical" href="https://timonageospatialsurvey.com/demo/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="TIMONA Geospatial and Surveying">
+<meta property="og:title" content="SiteTrackerPro — Interactive demo | TIMONA Geospatial and Surveying">
+<meta property="og:description" content="Interactive demo of SiteTrackerPro: construction tracking with cut and fill volumes from survey data, Ethiopian standard materials and bills of quantities, three-factor delivery fraud scoring and progress history.">
+<meta property="og:url" content="https://timonageospatialsurvey.com/demo/">
+<meta property="og:image" content="https://timonageospatialsurvey.com/img/farmland-map.jpg">
+<meta property="og:image:alt" content="SiteTrackerPro dashboard">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SiteTrackerPro — Interactive demo | TIMONA Geospatial and Surveying">
+<meta name="twitter:description" content="Interactive demo of SiteTrackerPro: construction tracking with cut and fill volumes from survey data, Ethiopian standard materials and bills of quantities, three-factor delivery fraud scoring and progress history.">
+<meta name="twitter:image" content="https://timonageospatialsurvey.com/img/farmland-map.jpg">
+<!-- domain-meta:end -->
+</head>
+<body>
+
+<div class="app">
+
+  <!-- SIDEBAR -->
+  <aside class="side">
+    <div class="brand">
+      <div class="mark">
+        <img src="../img/logo-mark.png" alt="TIMONA logo" width="512" height="512" decoding="async">
+      </div>
+      <div>
+        <b>SiteTrackerPro</b>
+        <small>by TIMONA</small>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav" aria-label="Screens"></nav>
+
+    <div class="side-foot">
+      <span class="pill">Live demo</span>
+      <div class="brand-tag" style="margin:0">Mapping Tomorrow, Today</div>
+      <a href="../sitetrackerpro.html">← Back to product page</a>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="top">
+      <div>
+        <h1 id="pageTitle">Dashboard</h1>
+        <div class="sub" id="pageSub">Portfolio health, alerts and recent activity</div>
+      </div>
+      <div class="top-right">
+        <div style="min-width:200px">
+          <label for="projSel">Project</label>
+          <select id="projSel"></select>
+        </div>
+        <button class="btn btn-g btn-sm" id="resetDemo" type="button" style="margin-top:1rem">Reset demo</button>
+      </div>
+    </div>
+
+    <div class="view" id="view"></div>
+  </div>
+</div>
+
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
