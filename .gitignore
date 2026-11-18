@@ -1,0 +1,14 @@
+.neon
+node_modules/
+
+# Secrets written by `neon deploy` / `neon env pull`, and local overrides.
+.env
+.env.local
+.env.*.local
+
+# Database dumps written by `npm run backup:download`
+backups/
+
+# Uploaded BIM files and build output
+sitetrackerpro-app/backend/uploads/
+sitetrackerpro-app/frontend/build/

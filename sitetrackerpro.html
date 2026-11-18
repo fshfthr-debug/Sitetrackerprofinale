@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SiteTrackerPro — Construction Tracking Software | TIMONA Geospatial and Surveying</title>
+<meta name="description" content="SiteTrackerPro is a construction tracking platform from TIMONA Geospatial and Surveying: cut and fill from survey control points, 3D BIM viewing, Ethiopian standard materials, delivery fraud checks, bills of quantities and live progress." />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" type="image/png" sizes="64x64" href="img/favicon.png">
+<style>
+  nav.links a.active{color:var(--accent)}
+  .page-hero{position:relative;overflow:hidden;padding:clamp(2.6rem,5vw,4.2rem) 0 clamp(2.6rem,5vw,4rem);border-bottom:1px solid var(--line)}
+  .page-hero::before{
+    content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(760px 440px at 84% 6%,rgba(57,217,138,.17),transparent 62%),
+               radial-gradient(620px 400px at 2% 96%,rgba(255,184,107,.08),transparent 60%);
+  }
+  .page-hero .wrap{position:relative;max-width:960px}
+  .crumbs{font-size:.76rem;color:#7d949c;letter-spacing:.04em;margin-bottom:1.4rem}
+  .crumbs a:hover{color:var(--accent)}
+  .crumbs span{opacity:.5;padding:0 .45rem}
+  .page-hero h1{font-size:clamp(2.1rem,4.6vw,3.4rem);margin:1.1rem 0 1.2rem}
+  .page-hero h1 em{font-style:normal;background:linear-gradient(100deg,var(--accent),#8ff0bd 60%,var(--sand));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .page-hero .actions{display:flex;gap:.7rem;flex-wrap:wrap;margin-top:2rem}
+  .kv{display:flex;gap:1.8rem;flex-wrap:wrap;margin-top:2.2rem;padding-top:1.5rem;border-top:1px solid var(--line)}
+  .kv div small{display:block;font-size:.66rem;letter-spacing:.15em;text-transform:uppercase;color:var(--muted)}
+  .kv div b{display:block;margin-top:.25rem;font-family:var(--font-d);font-size:.95rem;font-weight:500}
+
+  .facts{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border-bottom:1px solid var(--line)}
+  .fact{background:var(--ink-2);padding:1.5rem 1.3rem}
+  .fact small{display:block;font-size:.68rem;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .fact b{display:block;margin-top:.35rem;font-family:var(--font-d);font-size:1rem;font-weight:500;letter-spacing:-.01em}
+
+  .feat{display:grid;grid-template-columns:repeat(3,1fr);gap:1.1rem}
+  .feat .card h3{font-size:1.04rem}
+  .feat .card .tags{display:flex;flex-wrap:wrap;gap:.38rem;margin-top:1rem}
+  .feat .card .tags span{font-size:.7rem;padding:.2rem .55rem;border-radius:5px;background:rgba(255,255,255,.045);border:1px solid var(--line);color:#b6c9ce}
+
+  .screens{display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-top:2.2rem;counter-reset:sc}
+  .screen{
+    border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.15rem;background:rgba(11,33,41,.42);
+    transition:.28s;counter-increment:sc;
+  }
+  .screen:hover{background:rgba(14,42,51,.8);border-color:rgba(57,217,138,.32);transform:translateY(-3px)}
+  .screen::before{content:"0" counter(sc);display:block;font-family:var(--font-d);font-size:.7rem;letter-spacing:.12em;color:var(--accent);margin-bottom:.4rem}
+  .screen b{display:block;font-family:var(--font-d);font-size:.92rem;font-weight:500;margin-bottom:.2rem}
+  .screen small{font-size:.79rem;color:var(--muted);font-weight:300;line-height:1.45;display:block}
+
+  .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2rem}
+  .flow .step{position:static}
+  .flow .step::after{display:none}
+
+  .who{display:grid;grid-template-columns:repeat(3,1fr);gap:.8rem;margin-top:2rem}
+  .who div{border:1px solid var(--line);border-radius:12px;padding:1.15rem 1.2rem;background:rgba(11,33,41,.35)}
+  .who b{display:block;font-family:var(--font-d);font-size:.94rem;font-weight:500;margin-bottom:.3rem}
+  .who p{font-size:.84rem;color:var(--muted);font-weight:300;line-height:1.5}
+
+  .faq{display:grid;gap:.6rem;max-width:880px}
+  .faq details{border:1px solid var(--line);border-radius:12px;background:rgba(11,33,41,.42);padding:1.05rem 1.3rem;transition:border-color .25s}
+  .faq details[open]{border-color:rgba(57,217,138,.32);background:rgba(14,42,51,.6)}
+  .faq summary{cursor:pointer;font-family:var(--font-d);font-size:.97rem;list-style:none;display:flex;justify-content:space-between;gap:1rem;align-items:center}
+  .faq summary::-webkit-details-marker{display:none}
+  .faq summary::after{content:"+";color:var(--accent);font-size:1.15rem;flex:none}
+  .faq details[open] summary::after{content:"\2013"}
+  .faq p{margin-top:.8rem;color:var(--muted);font-size:.9rem;font-weight:300;line-height:1.6}
+
+  .demo{display:grid;grid-template-columns:.92fr 1.08fr;gap:clamp(2rem,4.5vw,3.4rem)}
+  .demo .c-card small{display:block;font-size:.7rem;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);margin-bottom:.15rem}
+  .demo .c-card b{font-family:var(--font-d);font-weight:500;font-size:.95rem}
+
+  @media (max-width:1024px){
+    .feat{grid-template-columns:repeat(2,1fr)}
+    .screens{grid-template-columns:repeat(2,1fr)}
+    .flow{grid-template-columns:repeat(2,1fr)}
+    .who{grid-template-columns:1fr}
+    .facts{grid-template-columns:repeat(2,1fr)}
+    .demo{grid-template-columns:1fr}
+  }
+  @media (max-width:720px){
+    .feat,.screens,.flow{grid-template-columns:1fr}
+    .kv{gap:1.2rem}
+  }
+</style>
+<!-- domain-meta:start -->
+<link rel="canonical" href="https://timonageospatialsurvey.com/sitetrackerpro.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="TIMONA Geospatial and Surveying">
+<meta property="og:title" content="SiteTrackerPro — Construction Tracking Software | TIMONA Geospatial and Surveying">
+<meta property="og:description" content="SiteTrackerPro is a construction tracking platform from TIMONA Geospatial and Surveying: cut and fill from survey control points, 3D BIM viewing, Ethiopian standard materials, delivery fraud checks, bills of quantities and live progress.">
+<meta property="og:url" content="https://timonageospatialsurvey.com/sitetrackerpro.html">
+<meta property="og:image" content="https://timonageospatialsurvey.com/img/farmland-circles.jpg">
+<meta property="og:image:alt" content="Aerial view used for land cover mapping">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SiteTrackerPro — Construction Tracking Software | TIMONA Geospatial and Surveying">
+<meta name="twitter:description" content="SiteTrackerPro is a construction tracking platform from TIMONA Geospatial and Surveying: cut and fill from survey control points, 3D BIM viewing, Ethiopian standard materials, delivery fraud checks, bills of quantities and live progress.">
+<meta name="twitter:image" content="https://timonageospatialsurvey.com/img/farmland-circles.jpg">
+<!-- domain-meta:end -->
+</head>
+<body>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="wrap">
+    <div class="topbar-l">
+      <a href="tel:+251914564405"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg>+251 914 564 405</a>
+      <a href="mailto:info@timonageospatialsurvey.com"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg>info@timonageospatialsurvey.com</a>
+    </div>
+    <div class="topbar-r">
+      <a href="#" aria-label="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5ZM3 9h4v12H3V9Zm7 0h3.8v1.7h.05c.53-1 1.83-2.05 3.77-2.05C21.4 8.65 22 11 22 14.1V21h-4v-6.1c0-1.5-.03-3.4-2.1-3.4-2.1 0-2.4 1.6-2.4 3.3V21h-4V9Z"/></svg></a>
+      <a href="#" aria-label="Facebook"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 9h3V6h-3c-2.2 0-4 1.8-4 4v2H7v3h3v7h3v-7h3l1-3h-4v-2c0-.6.4-1 1-1Z"/></svg></a>
+      <a href="#" aria-label="X"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.9 2H22l-7 8 8.2 12h-6.4l-5-7.3L5.9 22H2.8l7.5-8.6L2.4 2h6.6l4.5 6.7L18.9 2Zm-1.1 18h1.7L7.1 3.7H5.3L17.8 20Z"/></svg></a>
+    </div>
+  </div>
+</div>
+
+<!-- NAV -->
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a href="index.html" class="brand">
+      <div class="mark">
+        <img src="img/logo-mark.png" alt="TIMONA logo" width="512" height="512" decoding="async">
+      </div>
+      <div class="brand-name">TIMONA<span>Geospatial and Surveying</span></div>
+    </a>
+    <nav class="links">
+      <a href="index.html" class="nav-ico"><img src="img/icons/nav-home.png" alt="" width="18" height="18">Home</a>
+      <a href="index.html#services">Services</a>
+      <a href="sitetrackerpro.html" class="active" aria-current="page">SiteTrackerPro</a>
+      <a href="index.html#sectors">Sectors</a>
+      <a href="index.html#projects">Projects</a>
+      <a href="index.html#gallery">Gallery</a>
+      <a href="training.html">Training</a>
+      <a href="index.html#about">About</a>
+      <a href="index.html#contact" class="nav-ico"><img src="img/icons/nav-contact.png" alt="" width="18" height="18">Contact</a>
+    </nav>
+    <div class="nav-cta">
+      <a href="demo/" class="btn btn-primary">Try the live demo
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </a>
+      <button class="burger" id="burger" aria-label="Menu" aria-expanded="false"><span></span></button>
+    </div>
+  </div>
+  <div class="mobile-menu" id="mobileMenu">
+    <div class="wrap">
+      <a href="index.html"><img src="img/icons/nav-home.png" alt="" width="19" height="19">Home</a>
+      <a href="index.html#services">Services</a>
+      <a href="sitetrackerpro.html">SiteTrackerPro</a>
+      <a href="index.html#sectors">Sectors</a>
+      <a href="index.html#projects">Projects</a>
+      <a href="index.html#gallery">Gallery</a>
+      <a href="training.html">Training</a>
+      <a href="index.html#about">About</a>
+      <a href="index.html#contact"><img src="img/icons/nav-contact.png" alt="" width="19" height="19">Contact</a>
+      <a href="#demo" class="btn btn-primary">Request a demo</a>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- HERO -->
+  <section class="page-hero">
+    <div class="grid-bg"></div>
+    <div class="wrap">
+      <p class="crumbs"><a href="index.html">Home</a><span>/</span>SiteTrackerPro</p>
+      <span class="eyebrow">Software · construction tracking</span>
+      <h1>Progress you can <em>prove.</em><br>Not just report.</h1>
+      <p class="lede">SiteTrackerPro is the construction tracking platform we built and use on our own survey-to-build projects. Survey data, earthworks volumes, material deliveries, bills of quantities and progress sit in one record — so the figure in the monthly report matches what is actually on site.</p>
+      <div class="actions">
+        <a href="demo/" class="btn btn-primary">Try the live demo
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+        <a href="demo/" class="btn btn-ghost">Try the live demo →</a>
+      </div>
+      <div class="kv">
+        <div><small>Built for</small><b>Contractors &amp; site teams</b></div>
+        <div><small>Core calculation</small><b>Cut &amp; fill from survey points</b></div>
+        <div><small>Materials</small><b>80+ Ethiopian standards</b></div>
+        <div><small>Runs in</small><b>Any modern browser</b></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FACTS -->
+  <div class="facts">
+    <div class="fact"><small>Modules</small><b>7 integrated screens</b></div>
+    <div class="fact"><small>Earthworks</small><b>Automatic cut &amp; fill</b></div>
+    <div class="fact"><small>3D models</small><b>IFC · Revit · SketchUp</b></div>
+    <div class="fact"><small>Deliveries</small><b>Three-factor fraud scoring</b></div>
+  </div>
+
+  <!-- FEATURES -->
+  <section class="sec" id="features">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">What it does</span>
+        <h2>Six things that decide whether a project makes money</h2>
+        <p class="lede">Most site software records what happened. SiteTrackerPro is built around the numbers that get argued over at the end of the job — volumes, quantities, deliveries and progress.</p>
+      </div>
+
+      <div class="feat">
+        <article class="card reveal">
+          <div class="ico"><img src="img/icons/topographic.png" alt="" width="26" height="26" loading="lazy"></div>
+          <h3>Surveying &amp; earthworks</h3>
+          <p>Enter control points, spot elevations and the building footprint. The platform returns excavation and fill volumes plus the material quantities implied by them — no separate spreadsheet, no hand transpose.</p>
+          <div class="tags"><span>Cut &amp; fill</span><span>Control points</span><span>Elevations</span></div>
+        </article>
+
+        <article class="card reveal">
+          <div class="ico"><img src="img/icons/construction.png" alt="" width="26" height="26" loading="lazy"></div>
+          <h3>3D BIM viewer</h3>
+          <p>Open the model in the browser and walk around it. Rotate, pan and zoom, or cut a cross-section to check a level against the design. Tablet-ready for site use.</p>
+          <div class="tags"><span>IFC</span><span>Revit</span><span>SketchUp</span><span>ArchiCAD</span></div>
+        </article>
+
+        <article class="card reveal">
+          <div class="ico"><img src="img/icons/nav-projects.png" alt="" width="26" height="26" loading="lazy"></div>
+          <h3>Materials &amp; bills of quantities</h3>
+          <p>Eighty-plus Ethiopian standard materials across seven categories — foundation, structure, masonry, MEP, finishes, roofing and safety. Quantities generate from the building size, and you can add your own local supplier items.</p>
+          <div class="tags"><span>Auto quantities</span><span>BOM</span><span>Custom items</span></div>
+        </article>
+
+        <article class="card reveal">
+          <div class="ico"><img src="img/icons/nav-news.png" alt="" width="26" height="26" loading="lazy"></div>
+          <h3>Delivery fraud checks</h3>
+          <p>Every material delivery is scored against quantity, timing and value, with the weighting shown rather than hidden. You get a defensible flag — not an accusation, and not a blind acceptance.</p>
+          <div class="tags"><span>Risk score</span><span>Transparent</span><span>Audit trail</span></div>
+        </article>
+
+        <article class="card reveal">
+          <div class="ico"><img src="img/icons/nav-services.png" alt="" width="26" height="26" loading="lazy"></div>
+          <h3>Budget &amp; forecast</h3>
+          <p>Set rates per project, roll the bill of quantities into a budget and forecast forward from actual progress instead of the programme's assumptions.</p>
+          <div class="tags"><span>Rates</span><span>Forecast</span><span>Variance</span></div>
+        </article>
+
+        <article class="card reveal">
+          <div class="ico"><img src="img/icons/gis-analysis.png" alt="" width="26" height="26" loading="lazy"></div>
+          <h3>Progress &amp; dashboard</h3>
+          <p>Progress updates are stored as history, not overwritten. The dashboard surfaces KPIs, alerts and project status, so a delay shows up in the week it happens.</p>
+          <div class="tags"><span>History</span><span>KPIs</span><span>Alerts</span></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCREENS -->
+  <section class="sec process" id="screens">
+    <div class="wrap">
+      <div class="sec-head reveal">
+        <span class="eyebrow">Inside the platform</span>
+        <h2>Seven screens, no dead ends</h2>
+        <p class="lede">Everything a site team needs from setup to monthly reporting, without switching between four systems and a notebook.</p>
+      </div>
+      <div class="screens">
+        <div class="screen reveal"><b>Dashboard</b><small>KPIs, alerts and system status across all projects.</small></div>
+        <div class="screen reveal"><b>Projects</b><small>Every project, its status and its records in one list.</small></div>
+        <div class="screen reveal"><b>New project</b><small>Set up a project, rates and building parameters.</small></div>
+        <div class="screen reveal"><b>Surveying</b><small>Control points, elevations, cut and fill volumes.</small></div>
+        <div class="screen reveal"><b>3D viewer</b><small>Walk the BIM model and cut sections in the browser.</small></div>
+        <div class="screen reveal"><b>Materials</b><small>Standard and custom materials, with quantities.</small></div>
+        <div class="screen reveal"><b>Fraud check</b><small>Score a delivery and see how the score was built.</small></div>
+        <div class="screen reveal"><b>Progress history</b><small>Every update kept, so the curve can be rebuilt.</small></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHY IT FITS -->
+  <section class="sec">
+    <div class="wrap">
+      <div class="why">
+        <div class="reveal">
+          <span class="eyebrow">Why we built it</span>
+          <h2 style="margin:1rem 0 1rem">The gap between the survey and the site report</h2>
+          <p class="lede">We survey sites, so we kept watching the same failure: accurate field data going into a project, then being re-typed, rounded and argued over until nobody trusted the number.</p>
+          <p class="lede" style="margin-top:1rem">SiteTrackerPro closes that gap. The volumes come from the same coordinates our crews capture, the quantities come from those volumes, and the progress you report is the progress the platform recorded — traceable back to the point it came from.</p>
+          <p class="lede" style="margin-top:1rem">It works standalone on your projects, or with our survey team feeding it directly. Either way, it is configured for Ethiopian construction practice, with local standard materials already loaded.</p>
+
+          <div class="who">
+            <div><b>Main contractors</b><p>Track progress, volumes and deliveries across several sites.</p></div>
+            <div><b>Quantity surveyors</b><p>Quantities and BOM generated from measured data, not estimates.</p></div>
+            <div><b>Consultants &amp; supervisors</b><p>Verify claims against a record the contractor cannot quietly edit.</p></div>
+            <div><b>Site engineers</b><p>Log progress and deliveries from a tablet in the field.</p></div>
+            <div><b>Project owners</b><p>One dashboard instead of six conflicting monthly reports.</p></div>
+            <div><b>Municipal offices</b><p>Comparable records across publicly funded projects.</p></div>
+          </div>
+        </div>
+
+        <div class="reveal">
+          <span class="eyebrow">Implementation</span>
+          <h2 style="margin:1rem 0 1rem">Live in four steps</h2>
+          <div class="flow" style="margin-top:1.6rem">
+            <div class="step"><h3>Scoping</h3><p>We review your projects, rates and material list, and agree what gets tracked.</p></div>
+            <div class="step"><h3>Set-up</h3><p>Hosting, accounts and roles configured. We can host it or deploy on your server.</p></div>
+            <div class="step"><h3>Load</h3><p>Projects, drawings, bill of quantities and rates imported and checked.</p></div>
+            <div class="step"><h3>Train</h3><p>Site and office staff trained on the screens they will actually use.</p></div>
+          </div>
+          <div class="faq" style="margin-top:2rem">
+            <details open>
+              <summary>Can we use it without your survey team?</summary>
+              <p>Yes. SiteTrackerPro stands on its own — you enter control points and progress yourselves. Working with our crews simply means the data arrives already captured and checked.</p>
+            </details>
+            <details>
+              <summary>Where does it run?</summary>
+              <p>It runs in any modern browser. We can host it for you, or deploy it on your own server with your own database, so the records stay under your control.</p>
+            </details>
+            <details>
+              <summary>What does it cost?</summary>
+              <p>It is quoted per project or per organisation after a scoping call, because the set-up differs — number of sites, users and whether rates and materials need loading. No price list is published before we understand the scope.</p>
+            </details>
+            <details>
+              <summary>Does it replace our accounting system?</summary>
+              <p>No. It tracks construction quantities, progress and delivery records. It is designed to feed your existing reporting, not to be a general ledger.</p>
+            </details>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO -->
+  <section class="sec" id="demo" style="padding-top:0">
+    <div class="wrap">
+      <div class="demo">
+        <div class="reveal">
+          <span class="eyebrow">Request a demo</span>
+          <h2 style="margin:1rem 0 1rem">See it against your own project</h2>
+          <p class="lede">You can try the interactive demo right now — no sign-up. A guided session runs about 30 minutes and works best with one of your projects in mind — we'll show the cut and fill, the material schedule and a delivery check on numbers you recognise.</p>
+          <div class="contact-cards">
+            <div class="c-card">
+              <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2Z"/></svg></div>
+              <div><small>Call or WhatsApp</small><b><a href="tel:+251914564405">+251 914 564 405</a></b></div>
+            </div>
+            <div class="c-card">
+              <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m2 7 10 6 10-6"/></svg></div>
+              <div><small>Email</small><b><a href="mailto:info@timonageospatialsurvey.com">info@timonageospatialsurvey.com</a></b></div>
+            </div>
+            <div class="c-card">
+              <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg></div>
+              <div><small>Office</small><b>Bole Road · Addis Ababa, Ethiopia</b></div>
+            </div>
+          </div>
+        </div>
+
+        <form class="reveal" action="mailto:info@timonageospatialsurvey.com" method="post" enctype="text/plain">
+          <h3>Demo request</h3>
+          <p>Fields marked * are required.</p>
+          <div class="row2">
+            <div class="field"><label for="dname">Your name *</label><input id="dname" name="name" type="text" required placeholder="Full name"></div>
+            <div class="field"><label for="dorg">Organisation *</label><input id="dorg" name="organisation" type="text" required placeholder="Company or agency"></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label for="demail">Email *</label><input id="demail" name="email" type="email" required placeholder="you@company.com"></div>
+            <div class="field"><label for="dphone">Phone</label><input id="dphone" name="phone" type="tel" placeholder="+251 ..."></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label for="drole">Your role</label>
+              <select id="drole" name="role">
+                <option>Contractor / site management</option>
+                <option>Quantity surveyor</option>
+                <option>Consultant / supervising engineer</option>
+                <option>Project owner / developer</option>
+                <option>Municipal or government office</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="field"><label for="dproj">Active projects</label>
+              <select id="dproj" name="projects">
+                <option>1 project</option>
+                <option>2 – 5 projects</option>
+                <option>6 – 15 projects</option>
+                <option>More than 15</option>
+                <option>Not yet — evaluating</option>
+              </select>
+            </div>
+          </div>
+          <div class="field"><label for="dmsg">What would you like to see?</label><textarea id="dmsg" name="message" placeholder="Project type, the volumes or quantities you need to control, or the reporting problem you're trying to solve."></textarea></div>
+          <button type="submit" class="btn btn-primary">Send request
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </button>
+          <p class="form-note">This form opens your email app with the details filled in.</p>
+        </form>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="wrap">
+    <div class="f-grid">
+      <div class="f-col">
+        <a href="index.html" class="brand">
+          <div class="mark">
+            <img src="img/logo-mark.png" alt="TIMONA logo" width="512" height="512" decoding="async">
+          </div>
+          <div class="brand-name">TIMONA<span>Geospatial and Surveying</span></div>
+        </a>
+        <p class="brand-tag">Mapping Tomorrow, Today</p>
+        <p>Licensed surveying and geospatial practice delivering ground truth, spatial intelligence and the systems to use them.</p>
+        <div class="socials">
+          <a href="#" aria-label="LinkedIn"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.98 3.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 0 1 0-5ZM3 9h4v12H3V9Zm7 0h3.8v1.7h.05c.53-1 1.83-2.05 3.77-2.05C21.4 8.65 22 11 22 14.1V21h-4v-6.1c0-1.5-.03-3.4-2.1-3.4-2.1 0-2.4 1.6-2.4 3.3V21h-4V9Z"/></svg></a>
+          <a href="#" aria-label="Facebook"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 9h3V6h-3c-2.2 0-4 1.8-4 4v2H7v3h3v7h3v-7h3l1-3h-4v-2c0-.6.4-1 1-1Z"/></svg></a>
+          <a href="#" aria-label="X"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M18.9 2H22l-7 8 8.2 12h-6.4l-5-7.3L5.9 22H2.8l7.5-8.6L2.4 2h6.6l4.5 6.7L18.9 2Zm-1.1 18h1.7L7.1 3.7H5.3L17.8 20Z"/></svg></a>
+        </div>
+      </div>
+
+      <div class="f-col">
+        <h4>Services</h4>
+        <ul>
+          <li><a href="index.html#services">Land &amp; cadastral survey</a></li>
+          <li><a href="index.html#services">Engineering survey</a></li>
+          <li><a href="index.html#services">GIS &amp; data management</a></li>
+          <li><a href="index.html#services">Remote sensing</a></li>
+          <li><a href="index.html#services">LiDAR &amp; UAV mapping</a></li>
+          <li><a href="training.html">Training</a></li>
+        </ul>
+      </div>
+
+      <div class="f-col">
+        <h4>Company</h4>
+        <ul>
+          <li><a href="index.html"><img class="fli" src="img/icons/nav-home.png" alt="" width="15" height="15">Home</a></li>
+          <li><a href="index.html#about">About us</a></li>
+          <li><a href="sitetrackerpro.html">SiteTrackerPro</a></li>
+          <li><a href="index.html#projects">Projects</a></li>
+          <li><a href="index.html#gallery">Gallery</a></li>
+          <li><a href="index.html#deliverables">Deliverables</a></li>
+          <li><a href="index.html#contact"><img class="fli" src="img/icons/nav-contact.png" alt="" width="15" height="15">Contact</a></li>
+        </ul>
+      </div>
+
+      <div class="f-col">
+        <h4>Working hours</h4>
+        <div class="hours"><span>Monday – Friday</span><b>8:00 – 17:00</b></div>
+        <div class="hours"><span>Saturday</span><b>9:00 – 13:00</b></div>
+        <div class="hours"><span>Sunday</span><b>Closed</b></div>
+        <h4 style="margin-top:1.6rem">Enquiries</h4>
+        <div class="hours"><b>+251 914 564 405</b></div>
+      </div>
+    </div>
+
+    <div class="f-bottom">
+      <span>© <span id="year">2026</span> TIMONA Geospatial and Surveying. All rights reserved.</span>
+      <span><a href="#">Privacy</a> · <a href="#">Terms</a> · <a href="#">Data policy</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var nav = document.getElementById('nav');
+  var burger = document.getElementById('burger');
+  var menu = document.getElementById('mobileMenu');
+  var onScroll = function(){ nav.classList.toggle('scrolled', window.scrollY > 12); };
+  onScroll();
+  window.addEventListener('scroll', onScroll, {passive:true});
+  burger.addEventListener('click', function(){
+    var open = menu.classList.toggle('open');
+    burger.classList.toggle('open', open);
+    burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  menu.querySelectorAll('a').forEach(function(a){
+    a.addEventListener('click', function(){
+      menu.classList.remove('open');
+      burger.classList.remove('open');
+      burger.setAttribute('aria-expanded','false');
+    });
+  });
+  document.getElementById('year').textContent = new Date().getFullYear();
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var items = document.querySelectorAll('.reveal');
+  if (reduce || !('IntersectionObserver' in window)){
+    items.forEach(function(el){ el.classList.add('in'); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if (e.isIntersecting){
+          var i = Array.prototype.indexOf.call(items, e.target);
+          e.target.style.transitionDelay = Math.min(i % 4, 3) * 70 + 'ms';
+          e.target.classList.add('in');
+          io.unobserve(e.target);
+        }
+      });
+    }, {threshold:.12, rootMargin:'0px 0px -40px 0px'});
+    items.forEach(function(el){ io.observe(el); });
+  }
+})();
+</script>
+</body>
+</html>

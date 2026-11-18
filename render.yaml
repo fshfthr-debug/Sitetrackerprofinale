@@ -1,0 +1,59 @@
+# One-click deployment blueprint for Render (https://render.com).
+#
+# Render reads this file when you point it at this repository, so the service is
+# created with the right Dockerfile, health check, disk and settings — no clicking
+# through a form, and no risk of a forgotten environment variable.
+#
+# Deployment from a Git repository is required; see sitetrackerpro-app/DEPLOY-PUBLIC.md.
+
+services:
+  - type: web
+    name: sitetrackerpro
+    runtime: docker
+    # "free" costs nothing and is enough to try the live site. It sleeps after 15
+    # idle minutes (the next visit waits ~1 minute to wake it) and its filesystem is
+    # rebuilt on every restart or deploy, so uploaded BIM/take-off files are lost.
+    # For real use switch this one line to "starter" (~$7/month) and re-add the
+    # disk block at the bottom of this file. Both changes are explained in
+    # sitetrackerpro-app/DEPLOY-PUBLIC.md under "Moving off the free plan".
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./sitetrackerpro-app/deploy/Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Signing key for logins. Render generates a 64-character value on the first
+      # deploy and keeps it stable, so nobody is logged out by a redeploy.
+      - key: JWT_SECRET
+        generateValue: true
+      # Paste the Neon connection string when Render asks for it.
+      # Neon → Project → Connect → the "postgresql://…" string.
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      # Where imports are written. The image creates this folder owned by the app
+      # user, so uploads work on the free plan too — they just do not survive a
+      # restart until the disk is mounted (see the note at the bottom).
+      - key: UPLOAD_DIR
+        value: /app/uploads
+      # Render terminates TLS one hop in front of the app.
+      - key: TRUST_PROXY
+        value: "1"
+      # Public sign-up stays closed on the public site, exactly as it is locally.
+      # Without this the live site accepts new accounts from anyone who finds it,
+      # because .env is (correctly) not shipped inside the image.
+      - key: DISABLE_REGISTRATION
+        value: "1"
+
+    # DISK — needed for "starter" and above, NOT allowed on the free plan.
+    # To move to Starter: change `plan:` above to "starter" and uncomment these
+    # four lines, then commit. Existing uploads start surviving deploys again.
+    #
+    # disk:
+    #   name: uploads
+    #   mountPath: /app/uploads
+    #   sizeGB: 1

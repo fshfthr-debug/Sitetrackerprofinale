@@ -1,0 +1,71 @@
+DEPLOYING SITETRACKERPRO — THE REAL APP
+======================================
+
+The marketing site (this folder) is static. The real SiteTrackerPro is a
+Node.js + PostgreSQL application and lives in:
+
+    sitetrackerpro-app/
+
+You cannot open that by double-clicking — it needs a server. Three ways to run it:
+
+A. FREE HOSTED ROUTE — NO SERVER TO LOOK AFTER (easiest, recommended)
+   Two free accounts do all the machine-keeping:
+     1. neon.tech    - the PostgreSQL database (free plan, no card)
+     2. render.com   - runs the app and gives you an HTTPS address
+   In short:
+        - Neon: create a project, copy the connection string, then paste the
+          contents of  sitetrackerpro-app/database/schema.sql  into its SQL
+          Editor and run it once (creating the tables).
+        - Render: New -> Web Service from your GitHub repository, with
+            Root Directory   sitetrackerpro-app/backend
+            Build Command    npm install
+            Start Command    npm start
+        - Render -> Environment, add:
+            DATABASE_URL   the Neon connection string
+            JWT_SECRET     a long random string, 32+ characters
+            NODE_ENV       production
+            TRUST_PROXY    1
+        - Deploy, open the URL, register the first account (that is your admin
+          login), then add DISABLE_REGISTRATION=1 and redeploy.
+   Full walkthrough:  sitetrackerpro-app/DEPLOY.md , section "Route A".
+   Costs: both are free to start. Render's free instance sleeps after ~15 minutes
+   idle and wakes in about a minute; the paid instance is roughly US$7/month.
+
+B. ON YOUR OWN UBUNTU SERVER (if you already pay for hosting)
+   1. Copy the sitetrackerpro-app folder to the server.
+   2. Read  sitetrackerpro-app/DEPLOY.md  — it is the step-by-step guide.
+   3. In short:
+        - install Node 20 and PostgreSQL 15
+        - create the database and load  sitetrackerpro-app/database/schema.sql
+        - copy  deploy/.env.example  to  .env  and fill in the passwords
+        - run  deploy/install-ubuntu.sh  (installs services + Caddy for HTTPS)
+        - the script finishes with a health check and prints the URL
+   4. Point a DNS record at the server (e.g. app.timonageospatialsurvey.com).
+
+C. USING DOCKER (if the server has Docker)
+   sitetrackerpro-app/deploy/docker-compose.yml runs the app + database together:
+        cd sitetrackerpro-app/deploy
+        cp .env.example .env      # edit the passwords
+        docker compose up -d
+
+WHAT YOU NEED TO PROVIDE
+   * Route A: a Neon account and a Render account (both free to start), plus a
+     GitHub repository holding this folder — no server, no credit card.
+   * Routes B/C: a server with a public IP (2 GB RAM is plenty) — ~US$10-25/month
+   * A domain or subdomain pointed at the app, on any route
+   * Passwords for the database and the app's session secret
+
+USEFUL FILES
+   sitetrackerpro-app/DEPLOY.md ................ the main deployment guide
+   sitetrackerpro-app/DEPLOYMENT.md ............ extended/reference notes
+   sitetrackerpro-app/deploy/install-ubuntu.sh . one-shot installer
+   sitetrackerpro-app/deploy/backup.sh ......... database backup routine
+   sitetrackerpro-app/docs/ .................... architecture and API notes
+   sitetrackerpro-app/backend/.env.production.example ... every setting explained
+
+NOTES
+   * Registration is disabled by default (DISABLE_REGISTRATION=1) so only the
+     accounts you create can sign in. Remove that line to allow public sign-ups.
+   * The live demo at /demo/ in the marketing site is a browser-only preview of
+     the same calculations. It is not connected to this database.
+   * No secrets are included in this package — the .env files are templates.

@@ -1,0 +1,32 @@
+# Files that must never enter the Docker image.
+# Without this, a local node_modules (often 200 MB, wrong platform) is copied in
+# and the image fails at runtime with missing native bindings.
+
+# Dependencies are installed inside the image.
+node_modules
+**/node_modules
+
+# Build output is produced inside the image.
+sitetrackerpro-app/frontend/build
+sitetrackerpro-app/backend/public
+
+# Runtime data, not code.
+sitetrackerpro-app/backend/uploads
+backups
+
+# Secrets and local machine state. The ** prefix matters: a bare `.env` only
+# matches the repository root, and backend/.env holds the signing key.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+.neon
+**/.neon
+
+# Cloud workspace leftovers and local noise.
+files
+.git
+.gitignore
+*.log
+.DS_Store
