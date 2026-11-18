@@ -2584,7 +2584,7 @@ function NewProjectScreen({ token, fetchProjects, setCurrentScreen }) {
       <form onSubmit={handleCreate} style={styles.form}>
         <input placeholder="Project Name" value={name} onChange={(e) => setName(e.target.value)} style={styles.input} required />
         <textarea placeholder="Description" value={description} onChange={(e) => setDescription(e.target.value)} style={styles.textarea} />
-        <input type="number" placeholder="Budget (USD)" value={budget} onChange={(e) => setBudget(e.target.value)} style={styles.input} required />
+        <input type="number" placeholder="Budget (ETB)" value={budget} onChange={(e) => setBudget(e.target.value)} style={styles.input} required />
         <input placeholder="Location" value={location} onChange={(e) => setLocation(e.target.value)} style={styles.input} required />
         <input placeholder="Timeline (months)" type="number" value={timeline} onChange={(e) => setTimeline(e.target.value)} style={styles.input} />
         <button type="submit" style={styles.button}>✅ Create Project</button>
