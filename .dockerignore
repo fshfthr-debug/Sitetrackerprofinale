@@ -30,3 +30,13 @@ files
 .gitignore
 *.log
 .DS_Store
+
+# The marketing site and packaging helpers are not part of the app image.
+# Excluding them keeps the build context small and the upload quick.
+dist
+assets
+img
+demo
+build
+*.tar.gz
+*.zip

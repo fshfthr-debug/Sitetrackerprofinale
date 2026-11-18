@@ -18,8 +18,14 @@ services:
     # sitetrackerpro-app/DEPLOY-PUBLIC.md under "Moving off the free plan".
     plan: free
     region: frankfurt
-    dockerfilePath: ./sitetrackerpro-app/deploy/Dockerfile
-    dockerContext: ./sitetrackerpro-app
+    # The root Dockerfile builds from the repository root and copies from
+    # sitetrackerpro-app/, so no dockerContext setting is needed. (A context
+    # pointed at the app folder came through empty on Render and the build failed
+    # with "COPY backend/ ... not found".)
+    dockerfilePath: ./Dockerfile
+    # Stated explicitly so a previously saved value cannot linger: the context is
+    # the repository root, and the root Dockerfile copies from sitetrackerpro-app/.
+    dockerContext: .
     healthCheckPath: /health
     autoDeploy: true
     envVars:
