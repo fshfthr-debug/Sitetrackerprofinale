@@ -19,7 +19,7 @@ services:
     plan: free
     region: frankfurt
     dockerfilePath: ./sitetrackerpro-app/deploy/Dockerfile
-    dockerContext: .
+    dockerContext: ./sitetrackerpro-app
     healthCheckPath: /health
     autoDeploy: true
     envVars:
