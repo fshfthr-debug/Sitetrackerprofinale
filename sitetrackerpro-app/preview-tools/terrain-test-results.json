@@ -1,0 +1,223 @@
+{
+  "api": "http://127.0.0.1:3000",
+  "at": "2026-11-20T23:23:15.408Z",
+  "passed": 43,
+  "failed": 0,
+  "results": [
+    {
+      "name": "0. authenticated list loads",
+      "ok": true,
+      "detail": "HTTP 200, 8 records"
+    },
+    {
+      "name": "1a. valid GeoTIFF accepted",
+      "ok": true,
+      "detail": "HTTP 201"
+    },
+    {
+      "name": "1b. CRS read from GeoKeys, not guessed",
+      "ok": true,
+      "detail": "EPSG:32637"
+    },
+    {
+      "name": "1c. original file size recorded",
+      "ok": true,
+      "detail": "240582 bytes"
+    },
+    {
+      "name": "6a. minimum matches numpy",
+      "ok": true,
+      "detail": "2384.02587890625 vs 2384.02587890625"
+    },
+    {
+      "name": "6b. maximum matches numpy",
+      "ok": true,
+      "detail": "2427.345947265625 vs 2427.345947265625"
+    },
+    {
+      "name": "6c. mean matches numpy",
+      "ok": true,
+      "detail": "2405.560 vs 2405.560"
+    },
+    {
+      "name": "7a. bounds match the geotransform",
+      "ok": true,
+      "detail": "[500000,999600,500600,1000000]"
+    },
+    {
+      "name": "7b. pixel size is 2 m × 2 m",
+      "ok": true,
+      "detail": "{\"x\":2,\"y\":2}"
+    },
+    {
+      "name": "5a. NoData is NaN in the preview grid, not -9999",
+      "ok": true,
+      "detail": "1201 NaN cells, sentinel present: false"
+    },
+    {
+      "name": "5b. NoData excluded from statistics",
+      "ok": true,
+      "detail": "min 2384.02587890625"
+    },
+    {
+      "name": "5c. preview grid has the source dimensions (300 × 200)",
+      "ok": true,
+      "detail": "300×200, 60000 cells"
+    },
+    {
+      "name": "12a. stored file is byte-identical to the upload",
+      "ok": true,
+      "detail": "5 stored GeoTIFFs"
+    },
+    {
+      "name": "12b. API exposes the same SHA-256",
+      "ok": true,
+      "detail": "1d073dfe8fdfd7ff"
+    },
+    {
+      "name": "2a. non-TIFF rejected on signature",
+      "ok": true,
+      "detail": "HTTP 422: That file is not a TIFF/GeoTIFF (the file signature does not match). Export it as GeoTIFF and try again."
+    },
+    {
+      "name": "2b. rejected signature creates no record",
+      "ok": true,
+      "detail": "9 → 9"
+    },
+    {
+      "name": "3a. missing CRS refused, not guessed",
+      "ok": true,
+      "detail": "HTTP 422"
+    },
+    {
+      "name": "3b. failed attempt is recorded with status=failed",
+      "ok": true,
+      "detail": "This GeoTIFF has no CRS recorded (no projection GeoKey). It "
+    },
+    {
+      "name": "4a. Web Mercator refused with its code",
+      "ok": true,
+      "detail": "The GeoTIFF declares EPSG:3857, which this module does not support. Supported CRS: EPSG:43"
+    },
+    {
+      "name": "13a. corrupt TIFF rejected with a record",
+      "ok": true,
+      "detail": "HTTP 422, status failed"
+    },
+    {
+      "name": "13b. failure reason stored for the user",
+      "ok": true,
+      "detail": "The GeoTIFF could not be processed: Invalid field type: 44510"
+    },
+    {
+      "name": "13c. corrupt upload file removed after failure",
+      "ok": true,
+      "detail": "5 GeoTIFFs remain"
+    },
+    {
+      "name": "13d. failed record can be deleted",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "8a. 2000 × 2000 DEM accepted",
+      "ok": true,
+      "detail": "HTTP 201 in 633 ms"
+    },
+    {
+      "name": "8b. large-DEM statistics match numpy",
+      "ok": true,
+      "detail": "2258.947265625–2410.184326171875"
+    },
+    {
+      "name": "8c. preview is capped at 512 × 512",
+      "ok": true,
+      "detail": "{\"width\":512,\"height\":512}"
+    },
+    {
+      "name": "8d. preview binary is 512 × 512 float32",
+      "ok": true,
+      "detail": "1048576 bytes"
+    },
+    {
+      "name": "8e. preview values stay inside the source range",
+      "ok": true,
+      "detail": "preview min 2259.17578125 ≥ source min 2258.947265625"
+    },
+    {
+      "name": "10a. unauthenticated request is 401",
+      "ok": true,
+      "detail": "HTTP 401"
+    },
+    {
+      "name": "10b. another user gets 404, not data",
+      "ok": true,
+      "detail": "list 404, preview 404"
+    },
+    {
+      "name": "10c. another user cannot upload",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "8f. hillshade PNG generated from the preview",
+      "ok": true,
+      "detail": "188243 bytes"
+    },
+    {
+      "name": "8g. slope and aspect PNGs generated",
+      "ok": true,
+      "detail": "slope 200, aspect 200"
+    },
+    {
+      "name": "8h. contours are GeoJSON and labelled preview-derived",
+      "ok": true,
+      "detail": "4000 segments"
+    },
+    {
+      "name": "b1. benchmark comparison reports differences",
+      "ok": true,
+      "detail": "2 points compared"
+    },
+    {
+      "name": "b2. differences are benchmark − DEM (no adjustment)",
+      "ok": true,
+      "detail": "[1.498,-0.502]"
+    },
+    {
+      "name": "b3. response states nothing was shifted",
+      "ok": true,
+      "detail": "Reported for engineering review only. The DEM and the benchmarks have not been adjusted."
+    },
+    {
+      "name": "r1. projects endpoint unchanged",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "r2. BIM/3D components endpoint unchanged",
+      "ok": true,
+      "detail": "17 components"
+    },
+    {
+      "name": "r3. surveying endpoint unchanged",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "r4. quantity survey endpoint unchanged",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "r5. GIS catalogue still responds",
+      "ok": true,
+      "detail": "HTTP 200"
+    },
+    {
+      "name": "r6. GIS datasets still respond",
+      "ok": true,
+      "detail": "0 datasets"
+    }
+  ]
+}

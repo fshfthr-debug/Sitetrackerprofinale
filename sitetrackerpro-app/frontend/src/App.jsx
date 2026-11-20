@@ -1317,9 +1317,25 @@ function ThreeDViewerScreen({ token, projects }) {
   const [selected, setSelected] = useState(null);
   const mountRef = useRef(null);
 
+  // DEM terrain layer (optional; the component blocks are unchanged).
+  const [terrainSurveys, setTerrainSurveys] = useState([]);
+  const [terrainSurveyId, setTerrainSurveyId] = useState('');
+  const [terrain, setTerrain] = useState(null);
+  const [terrainVisible, setTerrainVisible] = useState(true);
+  const [exaggeration, setExaggeration] = useState(1);
+  const [terrainBusy, setTerrainBusy] = useState('');
+  const [terrainError, setTerrainError] = useState('');
+  const [uploadPercent, setUploadPercent] = useState(0);
+  const [verticalDatum, setVerticalDatum] = useState('');
+  const [derivative, setDerivative] = useState(null);
+  const [benchmarks, setBenchmarks] = useState(null);
+  const terrainMeshRef = useRef(null);
+
+
   const authHeaders = { Authorization: `Bearer ${token}` };
   const components = modelData?.components || [];
   const phases = [...new Set(components.map(c => c.phase || 'Unassigned'))];
+  const terrainKey = terrain ? `${terrain.surveyId}:${terrainVisible ? 'on' : 'off'}` : 'off';
 
   const loadModel = async (id) => {
     if (!id) { setModelData(null); return; }
@@ -1341,12 +1357,148 @@ function ThreeDViewerScreen({ token, projects }) {
     loadModel(projectId);
   }, [projectId]);
 
+  const refreshTerrainSurveys = async (id = projectId) => {
+    if (!id) { setTerrainSurveys([]); return; }
+    try {
+      const response = await axios.get(`${API_URL}/api/terrain/${id}`, { headers: authHeaders });
+      setTerrainSurveys(response.data);
+    } catch (err) {
+      setTerrainError(err.response?.data?.error || err.message);
+    }
+  };
+
+  useEffect(() => {
+    setTerrain(null);
+    setTerrainSurveyId('');
+    setBenchmarks(null);
+    setDerivative(null);
+    setTerrainError('');
+    refreshTerrainSurveys(projectId);
+  }, [projectId]);
+
+  // Loads the <=512 px preview grid for the selected survey. The GeoTIFF itself is never
+  // sent to the browser: only the decimated grid and its metadata.
+  useEffect(() => {
+    let cancelled = false;
+    setBenchmarks(null);
+    setDerivative(null);
+    if (!projectId || !terrainSurveyId) { setTerrain(null); return undefined; }
+
+    (async () => {
+      setTerrainBusy('Loading terrain preview…');
+      setTerrainError('');
+      try {
+        const meta = await axios.get(`${API_URL}/api/terrain/${projectId}/${terrainSurveyId}/preview`, { headers: authHeaders });
+        const bin = await axios.get(`${API_URL}/api/terrain/${projectId}/${terrainSurveyId}/preview.bin`, { headers: authHeaders, responseType: 'arraybuffer' });
+        if (cancelled) return;
+
+        const width = meta.data.preview.width;
+        const height = meta.data.preview.height;
+        const grid = new Float32Array(bin.data);
+        if (grid.length !== width * height) throw new Error('The preview grid does not match its metadata size.');
+
+        setTerrain({
+          surveyId: Number(terrainSurveyId),
+          grid,
+          width,
+          height,
+          bounds: meta.data.bounds,
+          statistics: meta.data.statistics,
+          cellSizeMetres: meta.data.cellSizeMetres,
+          crs: meta.data.crs,
+          verticalDatum: meta.data.verticalDatum,
+          fullResolution: meta.data.fullResolution
+        });
+        setTerrainVisible(true);
+      } catch (err) {
+        if (!cancelled) setTerrainError(err.response?.data?.error || err.message);
+      } finally {
+        if (!cancelled) setTerrainBusy('');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [projectId, terrainSurveyId]);
+
+  const uploadTerrain = async (file) => {
+    if (!file || !projectId) return;
+    setTerrainBusy('Uploading GeoTIFF…');
+    setTerrainError('');
+    setUploadPercent(0);
+    try {
+      const body = new FormData();
+      body.append('file', file);
+      if (verticalDatum.trim()) body.append('verticalDatum', verticalDatum.trim());
+      const response = await axios.post(`${API_URL}/api/terrain/${projectId}/upload`, body, {
+        headers: authHeaders,
+        onUploadProgress: event => {
+          if (event.total) setUploadPercent(Math.round((event.loaded / event.total) * 100));
+        }
+      });
+      await refreshTerrainSurveys();
+      setTerrainSurveyId(String(response.data.survey.id));
+    } catch (err) {
+      setTerrainError(err.response?.data?.error || err.message);
+      await refreshTerrainSurveys(); // rejected attempts are recorded with their reason
+    } finally {
+      setTerrainBusy('');
+      setUploadPercent(0);
+    }
+  };
+
+  const loadDerivative = async (kind) => {
+    if (!terrain) return;
+    setTerrainBusy(`Preparing ${kind}…`);
+    setTerrainError('');
+    try {
+      if (kind === 'contours') {
+        const response = await axios.get(`${API_URL}/api/terrain/${projectId}/${terrain.surveyId}/contours`, {
+          headers: authHeaders,
+          params: { interval: 10 }
+        });
+        setDerivative({ kind, count: response.data.features.length, metadata: response.data.metadata });
+      } else {
+        const response = await axios.get(`${API_URL}/api/terrain/${projectId}/${terrain.surveyId}/${kind}.png`, {
+          headers: authHeaders,
+          responseType: 'blob'
+        });
+        // The app's CSP allows data: images but not blob:, so encode the PNG as a data URL.
+        const url = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(reader.error || new Error('Could not read the preview image.'));
+          reader.readAsDataURL(response.data);
+        });
+        setDerivative({ kind, url });
+      }
+    } catch (err) {
+      setTerrainError(err.response?.data?.error || err.message);
+    } finally {
+      setTerrainBusy('');
+    }
+  };
+
+  const compareBenchmarks = async () => {
+    if (!terrain) return;
+    setTerrainBusy('Comparing with survey benchmarks…');
+    setTerrainError('');
+    try {
+      const response = await axios.get(`${API_URL}/api/terrain/${projectId}/${terrain.surveyId}/benchmarks`, { headers: authHeaders });
+      setBenchmarks(response.data);
+    } catch (err) {
+      setTerrainError(err.response?.data?.error || err.message);
+    } finally {
+      setTerrainBusy('');
+    }
+  };
+
   // Builds the scene from the project's components, and tears it down completely
   // when the data changes or the screen is left (Three.js objects are not GC'd).
   useEffect(() => {
     const mount = mountRef.current;
     const rows = modelData?.components || [];
-    if (!mount || rows.length === 0) return undefined;
+    const hasTerrain = Boolean(terrain && terrainVisible);
+    if (!mount || (rows.length === 0 && !hasTerrain)) return undefined;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xeef2f7);
@@ -1417,7 +1569,88 @@ function ThreeDViewerScreen({ token, projects }) {
     const grid = new THREE.GridHelper(span * 1.6, 12, 0xbfc9d6, 0xdde4ec);
     scene.add(grid);
 
-    const bounds = new THREE.Box3().setFromObject(blocks);
+    // Optional DEM layer: one mesh built from the preview grid. Heights are scaled from the real
+    // elevation range and the real cell size, so relief keeps its true proportions; the vertical
+    // exaggeration multiplies only the vertical axis. Cells touching NoData are left open.
+    const terrainGroup = new THREE.Group();
+    terrainGroup.name = 'dem-terrain';
+    if (terrain && terrainVisible) {
+      const demGrid = terrain.grid;
+      const pw = terrain.width;
+      const ph = terrain.height;
+      const spanX = Math.max(6, blocks.children.length > 0 ? span * 1.6 : 24);
+      const realWidth = Math.max(1e-6, Math.abs(num(terrain.cellSizeMetres?.x) || 1) * Math.max(1, pw - 1));
+      const realHeight = Math.max(1e-6, Math.abs(num(terrain.cellSizeMetres?.y) || 1) * Math.max(1, ph - 1));
+      const planeWidth = realWidth >= realHeight ? spanX : spanX * (realWidth / realHeight);
+      const planeDepth = realWidth >= realHeight ? spanX * (realHeight / realWidth) : spanX;
+      const zMin = num(terrain.statistics?.min);
+      const zRange = Math.max(1e-6, num(terrain.statistics?.max) - zMin);
+      const vScale = planeWidth / realWidth; // display units per metre
+
+      const positions = new Float32Array(pw * ph * 3);
+      const colors = new Float32Array(pw * ph * 3);
+      const palette = [new THREE.Color(0x1f5c3a), new THREE.Color(0x4f8f4a), new THREE.Color(0x9bbf62), new THREE.Color(0xc9a86a), new THREE.Color(0x8a5a3b)];
+
+      for (let y = 0; y < ph; y += 1) {
+        for (let x = 0; x < pw; x += 1) {
+          const index = y * pw + x;
+          const z = demGrid[index];
+          positions[index * 3] = (x / Math.max(1, pw - 1) - 0.5) * planeWidth;
+          positions[index * 3 + 1] = Number.isNaN(z) ? 0 : (z - zMin) * vScale;
+          positions[index * 3 + 2] = (y / Math.max(1, ph - 1) - 0.5) * planeDepth;
+
+          const t = Number.isNaN(z) ? 0 : Math.min(1, Math.max(0, (z - zMin) / zRange));
+          const scaled = t * (palette.length - 1);
+          const lower = Math.floor(scaled);
+          const colour = palette[lower].clone().lerp(palette[Math.min(palette.length - 1, lower + 1)], scaled - lower);
+          colors[index * 3] = colour.r;
+          colors[index * 3 + 1] = colour.g;
+          colors[index * 3 + 2] = colour.b;
+        }
+      }
+
+      const indices = [];
+      for (let y = 0; y < ph - 1; y += 1) {
+        for (let x = 0; x < pw - 1; x += 1) {
+          const a = y * pw + x;
+          const b = a + 1;
+          const c = a + pw;
+          const d = c + 1;
+          if ([demGrid[a], demGrid[b], demGrid[c], demGrid[d]].some(Number.isNaN)) continue;
+          indices.push(a, c, b, b, c, d);
+        }
+      }
+
+      const terrainGeometry = new THREE.BufferGeometry();
+      terrainGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      terrainGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      terrainGeometry.setIndex(indices);
+      terrainGeometry.computeVertexNormals();
+
+      const terrainMaterial = new THREE.MeshStandardMaterial({
+        vertexColors: true,
+        roughness: 0.95,
+        metalness: 0,
+        side: THREE.DoubleSide
+      });
+
+      const terrainMesh = new THREE.Mesh(terrainGeometry, terrainMaterial);
+      terrainMesh.name = 'dem-terrain-layer';
+      terrainMesh.scale.y = exaggeration;
+      terrainMesh.userData = { kind: 'terrain', surveyId: terrain.surveyId };
+      terrainGroup.add(terrainMesh);
+      terrainMeshRef.current = terrainMesh;
+      renderer.domElement.setAttribute('data-terrain-triangles', String(indices.length / 3));
+      renderer.domElement.setAttribute('data-terrain-cells', `${pw}x${ph}`);
+    } else {
+      terrainMeshRef.current = null;
+    }
+    scene.add(terrainGroup);
+
+    const bounds = new THREE.Box3();
+    if (blocks.children.length > 0) bounds.expandByObject(blocks);
+    if (terrainGroup.children.length > 0) bounds.expandByObject(terrainGroup);
+    if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-5, 0, -5), new THREE.Vector3(5, 8, 5));
     const centre = bounds.getCenter(new THREE.Vector3());
     const size = bounds.getSize(new THREE.Vector3());
     const radius = Math.max(size.x, size.y, size.z, 1);
@@ -1434,7 +1667,9 @@ function ThreeDViewerScreen({ token, projects }) {
     const resize = () => {
       const { clientWidth, clientHeight } = mount;
       if (!clientWidth || !clientHeight) return;
-      renderer.setSize(clientWidth, clientHeight, false);
+      // Keep the canvas CSS size equal to the mount: with `false` the canvas keeps its device-pixel
+      // size while the container stays in CSS pixels, so high-DPI screens showed only a quadrant.
+      renderer.setSize(clientWidth, clientHeight);
       camera.aspect = clientWidth / clientHeight;
       camera.updateProjectionMatrix();
     };
@@ -1468,10 +1703,19 @@ function ThreeDViewerScreen({ token, projects }) {
       controls.dispose();
       geometry.dispose();
       materials.forEach(material => material.dispose());
+      if (terrainMeshRef.current) {
+        terrainMeshRef.current.geometry.dispose();
+        terrainMeshRef.current.material.dispose();
+        terrainMeshRef.current = null;
+      }
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
       renderer.dispose();
     };
-  }, [modelData]);
+  }, [modelData, terrainKey]);
+
+  useEffect(() => {
+    if (terrainMeshRef.current) terrainMeshRef.current.scale.y = exaggeration;
+  }, [exaggeration, terrainKey]);
 
   const legend = Object.values(components.reduce((acc, row) => {
     const key = `${row.material_type}|${row.unit}`;
@@ -1501,6 +1745,148 @@ function ThreeDViewerScreen({ token, projects }) {
         </p>
       </div>
 
+      {projectId && (
+        <div style={styles.card}>
+          <h3 style={{marginTop: 0}}>⛰️ Terrain (DEM)</h3>
+          <p style={styles.helper}>
+            Upload a GeoTIFF. Its CRS must be WGS 84 (EPSG:4326) or a WGS 84 UTM zone — a raster
+            without a CRS, or in another CRS, is refused rather than guessed. The original file is
+            kept; the viewer receives a preview of at most 512 px per side, for visualization only.
+            It is not an engineering surface and must not be used for earthwork quantities.
+          </p>
+
+          <div style={{display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'center'}}>
+            <input
+              type="file"
+              accept=".tif,.tiff,image/tiff"
+              onChange={(event) => { uploadTerrain(event.target.files?.[0]); event.target.value = ''; }}
+              style={{...styles.input, maxWidth: '330px'}}
+            />
+            <input
+              value={verticalDatum}
+              onChange={(event) => setVerticalDatum(event.target.value)}
+              placeholder="Vertical datum (optional, e.g. MSL)"
+              style={{...styles.input, maxWidth: '260px'}}
+            />
+          </div>
+          {uploadPercent > 0 && <p style={styles.helper}>Uploading… {uploadPercent}%</p>}
+
+          {terrainSurveys.length > 0 && (
+            <>
+              <label style={{display: 'block', marginTop: '10px'}}>DEM survey</label>
+              <select value={terrainSurveyId} onChange={(event) => setTerrainSurveyId(event.target.value)} style={styles.input}>
+                <option value="">-- none --</option>
+                {terrainSurveys.map(survey => (
+                  <option key={survey.id} value={survey.id}>
+                    {survey.originalName} — {survey.status}{survey.epsg ? ` · EPSG:${survey.epsg}` : ''}{survey.noDataValue !== null ? ` · NoData ${survey.noDataValue}` : ''}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
+
+          {terrainSurveys.filter(survey => survey.status === 'failed').map(survey => (
+            <p key={survey.id} style={styles.helper}>⚠️ {survey.originalName}: {survey.error}</p>
+          ))}
+
+          {terrain && (
+            <div style={{marginTop: '12px'}}>
+              <p style={styles.helper}>
+                {terrain.crs} · bounds [{terrain.bounds.map(value => Number(value).toFixed(2)).join(', ')}]<br />
+                Preview {terrain.width} × {terrain.height} px from {terrain.fullResolution.width} × {terrain.fullResolution.height} cells ·
+                elevations {num(terrain.statistics.min).toFixed(2)}–{num(terrain.statistics.max).toFixed(2)} m
+                (mean {num(terrain.statistics.mean).toFixed(2)} m){terrain.verticalDatum ? ` · vertical datum: ${terrain.verticalDatum}` : ' · no vertical datum recorded'}
+              </p>
+              <p style={styles.helper}>
+                The footprint keeps the DEM's true aspect ratio but is scaled to the component blocks for
+                display; vertical relief keeps its true proportion to that footprint at ×1, and the slider
+                exaggerates only the vertical axis. Horizontal distances in the viewer are therefore
+                schematic, not survey distances.
+              </p>
+
+              <label style={{display: 'block', marginTop: '8px'}}>
+                <input type="checkbox" checked={terrainVisible} onChange={(event) => setTerrainVisible(event.target.checked)} /> Show terrain layer in the 3D viewer
+              </label>
+
+              <label style={{display: 'block', marginTop: '8px'}}>
+                Vertical exaggeration ×{exaggeration.toFixed(1)}
+                <input
+                  type="range" min="1" max="5" step="0.5" value={exaggeration}
+                  onChange={(event) => setExaggeration(Number(event.target.value))}
+                  style={{display: 'block', width: '100%', maxWidth: '340px'}}
+                />
+              </label>
+
+              <div style={{display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '10px'}}>
+                <button onClick={() => loadDerivative('hillshade')} style={styles.button}>Hillshade</button>
+                <button onClick={() => loadDerivative('slope')} style={styles.button}>Slope</button>
+                <button onClick={() => loadDerivative('aspect')} style={styles.button}>Aspect</button>
+                <button onClick={() => loadDerivative('contours')} style={styles.button}>Contours (10 m)</button>
+                <button onClick={compareBenchmarks} style={styles.button}>Compare benchmarks</button>
+                <button onClick={() => { setTerrain(null); setDerivative(null); setBenchmarks(null); }} style={styles.buttonSmall}>Remove layer</button>
+              </div>
+
+              {terrainBusy && <p style={styles.helper}>{terrainBusy}</p>}
+              {terrainError && <div style={styles.errorBox}>⚠️ {terrainError}</div>}
+
+              {derivative?.url && (
+                <div style={{marginTop: '10px'}}>
+                  <p style={styles.helper}>Preview-derived {derivative.kind} (from the {terrain.width} × {terrain.height} grid, not full resolution).</p>
+                  <img src={derivative.url} alt={`Preview-derived ${derivative.kind} of the DEM`} style={{maxWidth: '100%', border: '1px solid #dde4ec', borderRadius: '6px'}} />
+                </div>
+              )}
+
+              {derivative?.kind === 'contours' && (
+                <p style={styles.helper}>
+                  {derivative.count} contour segment{derivative.count === 1 ? '' : 's'} at {derivative.metadata?.interval} m from the preview grid
+                  {derivative.metadata?.truncated ? ' (capped — raise the interval for fewer lines)' : ''}.
+                  Preview-derived, not for engineering quantities.
+                </p>
+              )}
+
+              {benchmarks && (
+                <div style={{marginTop: '10px'}}>
+                  <h4 style={{marginBottom: '4px'}}>DEM vs survey benchmarks</h4>
+                  <p style={styles.helper}>{benchmarks.verticalDatumNote}</p>
+                  {benchmarks.results.length === 0 ? (
+                    <p style={styles.helper}>No surveying control points with coordinates exist for this project.</p>
+                  ) : (
+                    <>
+                      <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '13px'}}>
+                        <thead>
+                          <tr>
+                            <th style={{textAlign: 'left', borderBottom: '1px solid #dde4ec', padding: '4px'}}>Point</th>
+                            <th style={{textAlign: 'right', borderBottom: '1px solid #dde4ec', padding: '4px'}}>DEM (m)</th>
+                            <th style={{textAlign: 'right', borderBottom: '1px solid #dde4ec', padding: '4px'}}>Benchmark (m)</th>
+                            <th style={{textAlign: 'right', borderBottom: '1px solid #dde4ec', padding: '4px'}}>Difference (m)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {benchmarks.results.map((row, index) => (
+                            <tr key={index}>
+                              <td style={{padding: '4px'}}>#{row.pointId} <span style={styles.helper}>{row.status}</span></td>
+                              <td style={{textAlign: 'right', padding: '4px'}}>{row.demElevation === undefined ? '—' : Number(row.demElevation).toFixed(2)}</td>
+                              <td style={{textAlign: 'right', padding: '4px'}}>{row.benchmarkElevation === null || row.benchmarkElevation === undefined ? '—' : Number(row.benchmarkElevation).toFixed(2)}</td>
+                              <td style={{textAlign: 'right', padding: '4px'}}>{row.difference === null || row.difference === undefined ? '—' : Number(row.difference).toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      <p style={styles.helper}>
+                        {benchmarks.summary
+                          ? `Mean difference ${benchmarks.summary.meanDifference} m, spread ${benchmarks.summary.spread} m. `
+                          : ''}
+                        {benchmarks.note} Nothing has been shifted or normalised; a systematic offset may indicate a vertical datum difference for engineering review.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {error && <div style={styles.errorBox}>⚠️ {error}</div>}
 
       {loading && (
@@ -1511,7 +1897,7 @@ function ThreeDViewerScreen({ token, projects }) {
         <div style={styles.card}>
           <p style={styles.helper}>Select a project to build its 3D view.</p>
         </div>
-      ) : components.length === 0 && !loading ? (
+      ) : components.length === 0 && !loading && (!terrain || !terrainVisible) ? (
         <div style={styles.card}>
           <p style={styles.helper}>
             No components for this project yet. Import a take-off on the BIM Import screen and
@@ -1520,11 +1906,11 @@ function ThreeDViewerScreen({ token, projects }) {
         </div>
       ) : (
         <>
-          {components.length > 0 && (
+          {(components.length > 0 || (terrain && terrainVisible)) && (
             <div style={{position: 'relative'}}>
               <div ref={mountRef} style={{...styles.viewer3d, height: '520px', background: '#eef2f7', overflow: 'hidden'}} />
               <div style={styles.viewerBadge}>
-                {components.length} blocks · {phases.length} phase{phases.length === 1 ? '' : 's'} · drag to rotate, scroll to zoom
+                {components.length} blocks · {phases.length} phase{phases.length === 1 ? '' : 's'}{terrain && terrainVisible ? ' · DEM terrain (preview)' : ''} · drag to rotate, scroll to zoom
               </div>
             </div>
           )}

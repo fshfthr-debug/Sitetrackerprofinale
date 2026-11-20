@@ -12,3 +12,7 @@ backups/
 # Uploaded BIM files and build output
 sitetrackerpro-app/backend/uploads/
 sitetrackerpro-app/frontend/build/
+
+# Generated DEM test fixtures (recreate with preview-tools/fixtures/make-fixtures.py)
+sitetrackerpro-app/preview-tools/fixtures/*.tif
+sitetrackerpro-app/preview-tools/fixtures/*.png

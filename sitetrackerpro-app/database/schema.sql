@@ -233,6 +233,95 @@ CREATE INDEX IF NOT EXISTS idx_rates_project_id ON project_material_rates(projec
 CREATE INDEX IF NOT EXISTS idx_fraud_project_id ON fraud_detections(project_id);
 CREATE INDEX IF NOT EXISTS idx_progress_project_id ON project_progress(project_id);
 
+-- ==================== GIS & GEOSPATIAL INTELLIGENCE ====================
+-- Geographic data is stored as GeoJSON in JSONB. PostGIS is deliberately not required:
+-- it is GPL-2.0 server-side software, and the existing schema has no geometry columns, so
+-- the module keeps geometry portable (exportable as GeoJSON) instead.
+
+CREATE TABLE IF NOT EXISTS gis_datasets (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id),
+  name VARCHAR(200) NOT NULL,
+  source VARCHAR(120) NOT NULL,
+  source_query JSONB,
+  licence VARCHAR(120),
+  attribution TEXT,
+  crs VARCHAR(40) NOT NULL DEFAULT 'EPSG:4326',
+  geometry_type VARCHAR(60),
+  feature_count INTEGER,
+  bbox JSONB,
+  geojson JSONB NOT NULL,
+  processing_history JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gis_georeferencing (
+  project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+  crs VARCHAR(40),
+  vertical_datum VARCHAR(80),
+  anchor_lat NUMERIC(10,8),
+  anchor_lon NUMERIC(11,8),
+  anchor_elevation NUMERIC(12,3),
+  model_origin_east NUMERIC(15,4),
+  model_origin_north NUMERIC(15,4),
+  model_origin_up NUMERIC(12,4),
+  rotation_deg NUMERIC(9,4),
+  scale NUMERIC(12,8),
+  z_offset NUMERIC(12,4),
+  notes TEXT,
+  verified_by VARCHAR(160),
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Cached Overpass/Nominatim responses: the public APIs are shared resources.
+CREATE TABLE IF NOT EXISTS gis_osm_cache (
+  query_hash VARCHAR(64) PRIMARY KEY,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  expires_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_gis_datasets_project ON gis_datasets(project_id);
+CREATE INDEX IF NOT EXISTS idx_gis_cache_expiry ON gis_osm_cache(expires_at);
+
+-- ==================== DEM / TERRAIN SURVEYS ====================
+-- Metadata only. The GeoTIFF itself lives on the uploads volume; no raster bytes in JSONB.
+CREATE TABLE IF NOT EXISTS terrain_surveys (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  original_name VARCHAR(255) NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
+  preview_key VARCHAR(512),
+  file_bytes BIGINT,
+  sha256 VARCHAR(64),
+  crs VARCHAR(40),
+  epsg INTEGER,
+  vertical_datum VARCHAR(80),
+  width INTEGER,
+  height INTEGER,
+  pixel_size_x NUMERIC(18,10),
+  pixel_size_y NUMERIC(18,10),
+  bounds JSONB,
+  band_count INTEGER,
+  data_type VARCHAR(40),
+  no_data_value DOUBLE PRECISION,
+  z_min DOUBLE PRECISION,
+  z_max DOUBLE PRECISION,
+  z_mean DOUBLE PRECISION,
+  preview_width INTEGER,
+  preview_height INTEGER,
+  status VARCHAR(20) NOT NULL DEFAULT 'processing',
+  error_message TEXT,
+  source VARCHAR(120),
+  licence VARCHAR(120),
+  attribution TEXT,
+  processing_history JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_terrain_project ON terrain_surveys(project_id);
+
 -- ==================== SEED DATA: ETHIOPIAN MATERIALS ====================
 
 INSERT INTO materials_ethiopian_standards (material_type, category, unit, standard_quantity, cost, notes) VALUES

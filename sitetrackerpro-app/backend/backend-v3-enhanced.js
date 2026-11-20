@@ -500,6 +500,15 @@ function requireProjectAccess(getProjectId) {
   };
 }
 
+// ==================== GIS & GEOSPATIAL INTELLIGENCE ====================
+// Routes live in gis.js (OpenStreetMap/Overpass, datasets, CRS transforms, georeferencing).
+const createGisModule = require('./gis');
+const gisModule = createGisModule({ app, pool, verifyToken, requireProjectAccess });
+
+// DEM terrain (GeoTIFF upload, statistics, preview grid, derivatives).
+const createTerrainModule = require('./terrain');
+const terrainModule = createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR });
+
 // ==================== AUTHENTICATION ENDPOINTS ====================
 
 // Register
@@ -1647,6 +1656,14 @@ app.listen(PORT, () => {
   ensureSchema()
     .then(() => console.log('✅ Rate build-up table ready'))
     .catch(err => console.error('⚠️ Could not prepare the rate build-up table:', err.message));
+
+  gisModule.ensureGisSchema()
+    .then(() => console.log('✅ GIS tables ready (OpenStreetMap import, georeferencing, cache)'))
+    .catch(err => console.error('⚠️ Could not prepare the GIS tables:', err.message));
+
+  terrainModule.ensureTerrainSchema()
+    .then(() => console.log('✅ Terrain table ready (GeoTIFF DEM metadata)'))
+    .catch(err => console.error('⚠️ Could not prepare the terrain table:', err.message));
 });
 
 module.exports = app;
