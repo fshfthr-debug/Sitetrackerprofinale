@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import maplibregl from 'maplibre-gl';
+import proj4 from 'proj4';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -128,6 +129,42 @@ function addPlaceLabels(map, basemap) {
   return markers;
 }
 
+function geometryCenter(geometry) {
+  if (!geometry || !geometry.coordinates) return null;
+  if (geometry.type === 'Point') return geometry.coordinates;
+  let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
+  const walk = value => {
+    if (!Array.isArray(value)) return;
+    if (typeof value[0] === 'number' && typeof value[1] === 'number') {
+      west = Math.min(west, value[0]); east = Math.max(east, value[0]);
+      south = Math.min(south, value[1]); north = Math.max(north, value[1]);
+      return;
+    }
+    value.forEach(walk);
+  };
+  walk(geometry.coordinates);
+  if (!Number.isFinite(west)) return null;
+  return [(west + east) / 2, (south + north) / 2];
+}
+
+const fileSlug = name => String(name || 'dataset').replace(/[^a-z0-9._-]+/gi, '-').toLowerCase();
+
+function formatCursor(lngLat, crs, crsList) {
+  if (!lngLat) return null;
+  const wgs84 = crsList.find(item => item.code === 'EPSG:4326');
+  const target = crsList.find(item => item.code === crs);
+  if (!wgs84 || !target) return null;
+  if (target.code === 'EPSG:4326') {
+    return `${lngLat.lat.toFixed(6)}, ${lngLat.lng.toFixed(6)}`;
+  }
+  try {
+    const [x, y] = proj4(wgs84.def, target.def, [lngLat.lng, lngLat.lat]);
+    return `${x.toFixed(2)}, ${y.toFixed(2)} ${target.units === 'metres' ? 'm' : ''}`.trim();
+  } catch (err) {
+    return null;
+  }
+}
+
 export default function GisWorkspace({ token, projects }) {
   const [projectId, setProjectId] = useState('');
   const [workspaces, setWorkspaces] = useState([]);
@@ -146,6 +183,19 @@ export default function GisWorkspace({ token, projects }) {
   const [basemapError, setBasemapError] = useState(false);
   const [selected, setSelected] = useState(null);
   const [savingView, setSavingView] = useState(false);
+  const [crsList, setCrsList] = useState([]);
+  const [cursor, setCursor] = useState(null);
+  const [dataVersion, setDataVersion] = useState(0);
+  const [importFile, setImportFile] = useState(null);
+  const [importName, setImportName] = useState('');
+  const [importCrs, setImportCrs] = useState('EPSG:4326');
+  const [importing, setImporting] = useState(false);
+  const [reprojectDatasetId, setReprojectDatasetId] = useState('');
+  const [reprojectCrs, setReprojectCrs] = useState('EPSG:32637');
+  const [reprojecting, setReprojecting] = useState(false);
+  const [tableLayerId, setTableLayerId] = useState('');
+  const [tableFilter, setTableFilter] = useState('');
+  const [tableSort, setTableSort] = useState({ key: null, direction: 'asc' });
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 900);
 
   useEffect(() => {
@@ -159,6 +209,7 @@ export default function GisWorkspace({ token, projects }) {
   const fittedRef = useRef(null);
   const markersRef = useRef([]);
   const opacityTimers = useRef({});
+  const fileInputRef = useRef(null);
 
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
@@ -202,6 +253,9 @@ export default function GisWorkspace({ token, projects }) {
       });
     });
 
+    map.on('mousemove', event => setCursor({ lng: event.lngLat.lng, lat: event.lngLat.lat }));
+    map.on('mouseout', () => setCursor(null));
+
     // The local OSM extract is applied separately: a 12 MB style object is more reliably attached
     // after the map shell already exists.
     (async () => {
@@ -244,16 +298,18 @@ export default function GisWorkspace({ token, projects }) {
     (async () => {
       setBusy('Loading GIS workspaces…');
       try {
-        const [workspaceResponse, datasetResponse, terrainResponse, surveyResponse] = await Promise.all([
+        const [workspaceResponse, datasetResponse, terrainResponse, surveyResponse, crsResponse] = await Promise.all([
           axios.get(`${API_URL}/api/gis/workspaces/${projectId}`, { headers: authHeaders }),
           axios.get(`${API_URL}/api/gis/datasets/${projectId}`, { headers: authHeaders }),
           axios.get(`${API_URL}/api/terrain/${projectId}`, { headers: authHeaders }),
-          axios.get(`${API_URL}/api/gis/survey-points/${projectId}`, { headers: authHeaders })
+          axios.get(`${API_URL}/api/gis/survey-points/${projectId}`, { headers: authHeaders }),
+          axios.get(`${API_URL}/api/gis/crs`, { headers: authHeaders })
         ]);
         setWorkspaces(workspaceResponse.data);
         setDatasets(datasetResponse.data);
         setTerrains(terrainResponse.data);
         setSurveyCount(surveyResponse.data.count || 0);
+        setCrsList(crsResponse.data.crs || []);
         if (workspaceResponse.data.length > 0) setWorkspaceId(String(workspaceResponse.data[0].id));
       } catch (err) {
         setError(err.response?.data?.error || err.message);
@@ -303,7 +359,7 @@ export default function GisWorkspace({ token, projects }) {
   // Depend on the layer identity, not the whole workspace: changing opacity or visibility must not
   // refetch every dataset and hillshade image.
   const layerSignature = workspace
-    ? `${workspace.id}:` + workspace.layers.map(layer => `${layer.id}:${layer.kind}:${layer.datasetId || ''}:${layer.terrainId || ''}`).join('|')
+    ? `${workspace.id}:${dataVersion}:` + workspace.layers.map(layer => `${layer.id}:${layer.kind}:${layer.datasetId || ''}:${layer.terrainId || ''}`).join('|')
     : '';
 
   useEffect(() => {
@@ -315,7 +371,8 @@ export default function GisWorkspace({ token, projects }) {
       for (const layer of workspace.layers) {
         try {
           if (layer.kind === 'dataset' && layer.datasetId) {
-            const response = await axios.get(`${API_URL}/api/gis/datasets/${projectId}/${layer.datasetId}`, { headers: authHeaders });
+            // The map canvas works in longitude/latitude; storage keeps each dataset's own CRS.
+            const response = await axios.get(`${API_URL}/api/gis/datasets/${projectId}/${layer.datasetId}?crs=EPSG:4326`, { headers: authHeaders });
             next[layer.id] = { geojson: response.data.geojson, meta: response.data };
           } else if (layer.kind === 'survey') {
             const response = await axios.get(`${API_URL}/api/gis/survey-points/${projectId}`, { headers: authHeaders });
@@ -557,6 +614,7 @@ export default function GisWorkspace({ token, projects }) {
       await refreshWorkspace();
       await refreshWorkspaceList();
       setSelected(null);
+      if (String(tableLayerId) === String(layer.id)) setTableLayerId('');
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {
@@ -573,12 +631,176 @@ export default function GisWorkspace({ token, projects }) {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // CRS, import, export and attribute table actions
+  // ---------------------------------------------------------------------------
+  const changeWorkingCrs = async code => {
+    if (!workspace) return;
+    const previous = workspace.workingCrs;
+    setWorkspace({ ...workspace, workingCrs: code });
+    try {
+      const response = await axios.put(`${API_URL}/api/gis/workspaces/${projectId}/${workspace.id}`, { workingCrs: code }, { headers: authHeaders });
+      setWorkspace(response.data);
+      setNotice(`Working CRS changed to ${code}. Coordinates are unchanged; this only changes the readout.`);
+      setTimeout(() => setNotice(''), 3000);
+    } catch (err) {
+      setWorkspace(current => current && ({ ...current, workingCrs: previous }));
+      setError(err.response?.data?.error || err.message);
+    }
+  };
+
+  const refreshDatasets = async () => {
+    const response = await axios.get(`${API_URL}/api/gis/datasets/${projectId}`, { headers: authHeaders });
+    setDatasets(response.data);
+    return response.data;
+  };
+
+  const importDataset = async () => {
+    if (!importFile) {
+      setError('Choose a GeoJSON or CSV file to import.');
+      return;
+    }
+    setImporting(true);
+    setError('');
+    setNotice('');
+    try {
+      const form = new FormData();
+      form.append('file', importFile);
+      form.append('crs', importCrs);
+      if (importName.trim()) form.append('name', importName.trim());
+      const response = await axios.post(`${API_URL}/api/gis/datasets/${projectId}/import`, form, { headers: authHeaders });
+      const imported = response.data;
+      await refreshDatasets();
+      setDataVersion(version => version + 1);
+      if (workspaceId) {
+        await addLayer({ kind: 'dataset', datasetId: imported.id, name: imported.name });
+      }
+      setNotice(`Imported “${imported.name}” (${imported.featureCount} features, stored as ${imported.crs}).`);
+      setImportFile(null);
+      setImportName('');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const exportDataset = async (dataset, format) => {
+    if (!dataset) return;
+    setError('');
+    try {
+      const response = await axios.get(`${API_URL}/api/gis/datasets/${projectId}/${dataset.id}/export?format=${format}`, {
+        headers: authHeaders,
+        responseType: 'blob'
+      });
+      const objectUrl = URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = `${fileSlug(dataset.name)}.${format === 'csv' ? 'csv' : 'geojson'}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setNotice(`Exported “${dataset.name}” as ${format.toUpperCase()} in ${dataset.crs}.`);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    }
+  };
+
+  const reprojectDataset = async dataset => {
+    if (!dataset) return;
+    if (!window.confirm(`Reproject “${dataset.name}” from ${dataset.crs} to ${reprojectCrs}? Coordinates are converted in place; attributes and the layer stay.`)) return;
+    setReprojecting(true);
+    setError('');
+    try {
+      const response = await axios.post(`${API_URL}/api/gis/datasets/${projectId}/${dataset.id}/reproject`, {
+        targetCrs: reprojectCrs
+      }, { headers: authHeaders });
+      await refreshDatasets();
+      setDataVersion(version => version + 1);
+      setNotice(`Reprojected “${response.data.name}” from ${response.data.previousCrs} to ${response.data.crs}.`);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setReprojecting(false);
+    }
+  };
+
+  const openTable = layer => {
+    setTableLayerId(layer.id);
+    setTableFilter('');
+    setTableSort({ key: null, direction: 'asc' });
+  };
+
+  const focusTableRow = (layer, row) => {
+    const center = geometryCenter(row.geometry);
+    if (center && mapRef.current) {
+      mapRef.current.flyTo({ center, zoom: Math.max(mapRef.current.getZoom(), 15) });
+    }
+    setSelected({
+      layerId: `gislayer-${layer.id}`,
+      properties: row.properties,
+      geometryType: row.geometry && row.geometry.type
+    });
+  };
+
   const project = projects.find(item => String(item.id) === String(projectId));
   const gridStyle = narrow
     ? { ...styles.grid, gridTemplateColumns: 'minmax(0, 1fr)' }
     : styles.grid;
   const readyTerrains = terrains.filter(item => item.status === 'ready');
   const layers = workspace?.layers || [];
+
+  const workingCrs = workspace?.workingCrs || 'EPSG:4326';
+  const workingCrsDef = crsList.find(item => item.code === workingCrs);
+  const cursorText = formatCursor(cursor, workingCrs, crsList);
+  const tableLayer = layers.find(layer => String(layer.id) === String(tableLayerId));
+  const tableDataset = tableLayer && tableLayer.kind === 'dataset'
+    ? datasets.find(dataset => String(dataset.id) === String(tableLayer.datasetId))
+    : null;
+
+  const table = useMemo(() => {
+    const payload = tableLayerId ? payloads[tableLayerId] : null;
+    const features = payload && payload.geojson ? payload.geojson.features || [] : [];
+    const columns = [];
+    features.forEach(feature => {
+      Object.keys(feature.properties || {}).forEach(key => {
+        if (!columns.includes(key)) columns.push(key);
+      });
+    });
+    let rows = features.map((feature, index) => ({
+      index,
+      geometry: feature.geometry,
+      properties: feature.properties || {}
+    }));
+    const query = tableFilter.trim().toLowerCase();
+    if (query) {
+      rows = rows.filter(row => Object.values(row.properties).some(value => String(value).toLowerCase().includes(query)));
+    }
+    if (tableSort.key) {
+      rows = [...rows].sort((left, right) => {
+        const a = left.properties[tableSort.key];
+        const b = right.properties[tableSort.key];
+        const aNumber = Number(a);
+        const bNumber = Number(b);
+        let result;
+        if (a !== '' && b !== '' && Number.isFinite(aNumber) && Number.isFinite(bNumber)) {
+          result = aNumber - bNumber;
+        } else {
+          result = String(a ?? '').localeCompare(String(b ?? ''));
+        }
+        return tableSort.direction === 'asc' ? result : -result;
+      });
+    }
+    return { columns, rows, total: features.length };
+  }, [tableLayerId, payloads, tableFilter, tableSort]);
+
+  const toggleTableSort = key => {
+    setTableSort(current => current.key === key
+      ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
+      : { key, direction: 'asc' });
+  };
 
   return (
     <div style={styles.page}>
@@ -670,6 +892,90 @@ export default function GisWorkspace({ token, projects }) {
           {workspace && (
             <>
               <div style={{ ...styles.card, marginTop: '12px' }}>
+                <h3 style={{ marginTop: 0 }}>Coordinate system</h3>
+                <p style={{ ...styles.helper, marginTop: 0 }}>
+                  Map canvas: <strong>EPSG:3857</strong> (Web Mercator). Layers are requested in
+                  {' '}<strong>EPSG:4326</strong> and transformed from each dataset's stored CRS on read.
+                </p>
+                <label style={styles.helper}>Working CRS (cursor readout)</label>
+                <select
+                  id="gis-working-crs"
+                  value={workingCrs}
+                  onChange={event => changeWorkingCrs(event.target.value)}
+                  style={{ ...styles.input, width: '100%' }}
+                >
+                  {crsList.map(item => (
+                    <option key={item.code} value={item.code}>{item.code} — {item.name}</option>
+                  ))}
+                </select>
+                <div style={{ background: '#f7f9fb', border: '1px solid #e3e9ef', borderRadius: '6px', padding: '8px', marginTop: '8px', fontFamily: 'Consolas, monospace', fontSize: '12px' }}>
+                  {cursor ? (
+                    <>
+                      <div>WGS 84: {cursor.lat.toFixed(6)}, {cursor.lng.toFixed(6)}</div>
+                      {workingCrs !== 'EPSG:4326' && (
+                        <div>{workingCrs}: {cursorText || '—'}</div>
+                      )}
+                      <button
+                        style={{ ...styles.buttonSmall, marginTop: '6px' }}
+                        onClick={() => navigator.clipboard && navigator.clipboard.writeText(
+                          workingCrs === 'EPSG:4326' || !cursorText
+                            ? `${cursor.lat.toFixed(6)}, ${cursor.lng.toFixed(6)}`
+                            : cursorText
+                        )}
+                      >
+                        Copy coordinates
+                      </button>
+                    </>
+                  ) : (
+                    <span style={{ fontFamily: 'Calibri' }}>Move the pointer over the map to read coordinates.</span>
+                  )}
+                </div>
+                <div style={{ borderTop: '1px solid #eee', marginTop: '10px', paddingTop: '10px' }}>
+                  <label style={styles.helper}>Reproject a dataset (in place)</label>
+                  {datasets.length === 0 ? (
+                    <p style={styles.helper}>No datasets to reproject.</p>
+                  ) : (
+                    <>
+                      <select
+                        id="gis-reproject-dataset"
+                        value={reprojectDatasetId}
+                        onChange={event => setReprojectDatasetId(event.target.value)}
+                        style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                      >
+                        <option value="">-- Dataset --</option>
+                        {datasets.map(dataset => (
+                          <option key={dataset.id} value={dataset.id}>{dataset.name} ({dataset.crs})</option>
+                        ))}
+                      </select>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <select
+                          id="gis-reproject-target"
+                          value={reprojectCrs}
+                          onChange={event => setReprojectCrs(event.target.value)}
+                          style={{ ...styles.input, flex: 1 }}
+                        >
+                          {crsList.filter(item => item.code !== 'EPSG:3857').map(item => (
+                            <option key={item.code} value={item.code}>{item.code} — {item.name}</option>
+                          ))}
+                        </select>
+                        <button
+                          style={styles.button}
+                          disabled={reprojecting || !reprojectDatasetId}
+                          onClick={() => reprojectDataset(datasets.find(item => String(item.id) === String(reprojectDatasetId)))}
+                        >
+                          {reprojecting ? 'Working…' : 'Reproject'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  <p style={{ ...styles.helper, fontSize: '11px' }}>
+                    {workingCrsDef ? `${workingCrsDef.units}; ${workingCrsDef.axis}.` : ''} proj4js converts x/y only:
+                    no datum grid shift, no vertical datum.
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ ...styles.card, marginTop: '12px' }}>
                 <h3 style={{ marginTop: 0 }}>Layers</h3>
                 {layers.length === 0 && <p style={styles.helper}>No layers yet. Add a dataset, DEM hillshade or the survey points below.</p>}
                 {[...layers].sort((a, b) => b.zIndex - a.zIndex).map(layer => (
@@ -697,6 +1003,30 @@ export default function GisWorkspace({ token, projects }) {
                       <button onClick={() => zoomToLayer(layer)} style={styles.buttonSmall}>Zoom</button>
                       <button onClick={() => removeLayer(layer)} style={styles.buttonSmall}>×</button>
                     </div>
+                    {(layer.kind === 'dataset' || layer.kind === 'survey') && (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '5px', flexWrap: 'wrap' }}>
+                        <button onClick={() => openTable(layer)} style={styles.buttonSmall}>Attribute table</button>
+                        {layer.kind === 'dataset' && (
+                          <>
+                            <button
+                              onClick={() => exportDataset(datasets.find(item => String(item.id) === String(layer.datasetId)), 'geojson')}
+                              style={styles.buttonSmall}
+                            >
+                              GeoJSON
+                            </button>
+                            <button
+                              onClick={() => exportDataset(datasets.find(item => String(item.id) === String(layer.datasetId)), 'csv')}
+                              style={styles.buttonSmall}
+                            >
+                              CSV
+                            </button>
+                            <span style={{ fontSize: '11px', color: '#5b6773' }}>
+                              stored {payloads[layer.id]?.meta?.crs || '—'}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -732,6 +1062,44 @@ export default function GisWorkspace({ token, projects }) {
                     </button>
                   </div>
                 )}
+
+                <div style={{ borderTop: '1px solid #eee', marginTop: '12px', paddingTop: '10px' }}>
+                  <label style={styles.helper}>Import dataset (GeoJSON or CSV)</label>
+                  <input
+                    id="gis-import-file"
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".geojson,.json,.csv,application/json,text/csv"
+                    onChange={event => setImportFile(event.target.files && event.target.files[0] ? event.target.files[0] : null)}
+                    style={{ fontSize: '12px', marginBottom: '6px', maxWidth: '100%' }}
+                  />
+                  <input
+                    id="gis-import-name"
+                    value={importName}
+                    onChange={event => setImportName(event.target.value)}
+                    placeholder="Dataset name (optional)"
+                    style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                  />
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <select
+                      id="gis-import-crs"
+                      value={importCrs}
+                      onChange={event => setImportCrs(event.target.value)}
+                      style={{ ...styles.input, flex: 1 }}
+                    >
+                      {crsList.map(item => (
+                        <option key={item.code} value={item.code}>{item.code} — {item.name}</option>
+                      ))}
+                    </select>
+                    <button onClick={importDataset} disabled={importing} style={styles.button}>
+                      {importing ? 'Importing…' : 'Import'}
+                    </button>
+                  </div>
+                  <p style={{ ...styles.helper, fontSize: '11px' }}>
+                    The source CRS must be stated; nothing is inferred from the file. CSV needs
+                    lon/lat or easting/northing columns. Max {3000} features, 20 MB.
+                  </p>
+                </div>
 
                 <div style={{ borderTop: '1px solid #eee', marginTop: '12px', paddingTop: '10px' }}>
                   <label style={styles.helper}>Survey control points ({surveyCount})</label>
@@ -771,8 +1139,9 @@ export default function GisWorkspace({ token, projects }) {
           )}
         </div>
 
-        <div style={{ position: 'relative' }}>
-          <div ref={mapContainer} style={{ ...styles.map, height: narrow ? '480px' : '660px' }} />
+        <div>
+          <div style={{ position: 'relative' }}>
+            <div ref={mapContainer} style={{ ...styles.map, height: narrow ? '480px' : '660px' }} />
           {selected && (
             <div style={styles.inspector}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
@@ -790,6 +1159,79 @@ export default function GisWorkspace({ token, projects }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          </div>
+
+          {tableLayer && (
+            <div style={{ ...styles.card, marginTop: '12px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <h3 style={{ margin: 0 }}>Attribute table — {tableLayer.name}</h3>
+                <button onClick={() => setTableLayerId('')} style={styles.buttonSmall}>Close</button>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', margin: '8px 0' }}>
+                <input
+                  id="gis-table-filter"
+                  value={tableFilter}
+                  onChange={event => setTableFilter(event.target.value)}
+                  placeholder="Filter rows…"
+                  style={{ ...styles.input, flex: 1, minWidth: '160px' }}
+                />
+                <span style={{ ...styles.helper, margin: 0 }}>
+                  {table.rows.length} of {table.total} features
+                </span>
+                {tableDataset && (
+                  <>
+                    <button onClick={() => exportDataset(tableDataset, 'geojson')} style={styles.buttonSmall}>Export GeoJSON</button>
+                    <button onClick={() => exportDataset(tableDataset, 'csv')} style={styles.buttonSmall}>Export CSV</button>
+                  </>
+                )}
+              </div>
+              <div style={{ maxHeight: '300px', overflow: 'auto', border: '1px solid #e3e9ef', borderRadius: '6px' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                  <thead>
+                    <tr>
+                      <th style={{ position: 'sticky', top: 0, background: '#f3f6f9', textAlign: 'left', padding: '6px', borderBottom: '1px solid #dfe6ec' }}>#</th>
+                      {table.columns.map(column => (
+                        <th
+                          key={column}
+                          onClick={() => toggleTableSort(column)}
+                          style={{ position: 'sticky', top: 0, background: '#f3f6f9', textAlign: 'left', padding: '6px', borderBottom: '1px solid #dfe6ec', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          {column}{tableSort.key === column ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {table.rows.map(row => (
+                      <tr
+                        key={row.index}
+                        onClick={() => focusTableRow(tableLayer, row)}
+                        style={{ cursor: 'pointer', borderBottom: '1px solid #f0f3f6' }}
+                      >
+                        <td style={{ padding: '5px 6px', color: '#8190a0' }}>{row.index + 1}</td>
+                        {table.columns.map(column => (
+                          <td key={column} style={{ padding: '5px 6px', whiteSpace: 'nowrap', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {row.properties[column] === undefined || row.properties[column] === null ? '' : String(row.properties[column])}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                    {table.rows.length === 0 && (
+                      <tr>
+                        <td colSpan={table.columns.length + 1} style={{ padding: '12px', color: '#5b6773' }}>
+                          No feature matches the filter.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              <p style={{ ...styles.helper, fontSize: '11px' }}>
+                Click a header to sort; click a row to locate the feature on the map. Values are the
+                stored attributes; geometry is displayed in EPSG:4326.
+              </p>
             </div>
           )}
         </div>

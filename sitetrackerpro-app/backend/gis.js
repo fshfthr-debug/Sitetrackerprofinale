@@ -12,8 +12,15 @@
  */
 
 const crypto = require('crypto');
-const proj4 = require('proj4');
+const multer = require('multer');
 const rateLimit = require('express-rate-limit');
+const {
+  crsDefinition,
+  listCrs,
+  isGeographic,
+  transformPoint,
+  transformFeatureCollection
+} = require('./gis-crs');
 
 // ---------------------------------------------------------------------------
 // Attribution and sources. OSM data is ODbL 1.0: it must be attributed wherever shown,
@@ -64,83 +71,6 @@ const CATEGORIES = [
 ];
 
 const CATEGORY_BY_KEY = new Map(CATEGORIES.map(category => [category.key, category]));
-
-// ---------------------------------------------------------------------------
-// CRS handling. Every transform names both systems; a missing definition is an error, not
-// a guess. EPSG codes 326xx/327xx are built from the standard UTM definition for the zone
-// encoded in the code itself (no zone inference from coordinates).
-// ---------------------------------------------------------------------------
-const CRS_DEFINITIONS = {
-  'EPSG:4326': { def: '+proj=longlat +datum=WGS84 +no_defs', name: 'WGS 84 geographic', units: 'degrees', axis: 'latitude / longitude' },
-  // EPSG:4979 is deliberately not offered: proj4js transforms x/y only, so listing a 3D
-  // system here would imply the ellipsoidal height is handled, and it is not.
-  'EPSG:3857': {
-    def: '+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +wktext +no_defs',
-    name: 'Web Mercator (map display only)',
-    units: 'metres',
-    axis: 'easting / northing'
-  }
-};
-
-function utmDefinition(epsg) {
-  const code = Number(epsg);
-  // 32601-32660: WGS 84 / UTM northern hemisphere; 32701-32760: southern hemisphere.
-  const isNorth = code >= 32601 && code <= 32660;
-  const isSouth = code >= 32701 && code <= 32760;
-  if (!isNorth && !isSouth) return null;
-
-  const zone = code - (isNorth ? 32600 : 32700);
-  const south = isSouth ? ' +south' : '';
-  const def = `+proj=utm +zone=${zone}${south} +datum=WGS84 +units=m +no_defs`;
-  return { def, name: `WGS 84 / UTM zone ${zone}${isSouth ? 'S' : 'N'}`, units: 'metres', axis: 'easting / northing' };
-}
-
-function crsDefinition(code) {
-  if (!code) return null;
-  const key = String(code).trim().toUpperCase().replace(/^EPSG::/, 'EPSG:');
-  if (CRS_DEFINITIONS[key]) return { code: key, ...CRS_DEFINITIONS[key] };
-
-  const match = /^EPSG:(32[67]\d{2})$/.exec(key);
-  if (match) {
-    const utm = utmDefinition(match[1]);
-    if (utm) return { code: key, ...utm };
-  }
-
-  return null;
-}
-
-function listCrs() {
-  const list = Object.entries(CRS_DEFINITIONS).map(([code, value]) => ({ code, ...value }));
-  [32636, 32637, 32638, 32736, 32737, 32738].forEach(zone => {
-    const utm = utmDefinition(zone);
-    if (utm) list.push({ code: `EPSG:${zone}`, ...utm });
-  });
-  return list;
-}
-
-// Transform a single [x, y] pair (or [lon, lat] for geographic input). Returns numbers; a
-// definition proj4 cannot build throws, and the caller turns that into a 400.
-function transformPoint(coordinates, fromCrs, toCrs) {
-  const from = crsDefinition(fromCrs);
-  const to = crsDefinition(toCrs);
-  if (!from) throw new Error(`Unsupported source CRS ${fromCrs}. Choose one from GET /api/gis/crs.`);
-  if (!to) throw new Error(`Unsupported target CRS ${toCrs}. Choose one from GET /api/gis/crs.`);
-  const x = Number(coordinates[0]);
-  const y = Number(coordinates[1]);
-
-  // GeoJSON and this API use [longitude, latitude] for geographic systems. A latitude of 38
-  // would silently transform to the wrong place, so it is refused instead.
-  if (from.units === 'degrees') {
-    if (Math.abs(x) > 180 || Math.abs(y) > 90) {
-      throw new Error(`${from.code} coordinates are [longitude, latitude]; ${JSON.stringify([x, y])} is out of range. No swap is attempted automatically.`);
-    }
-  }
-
-  if (from.code === to.code) return [x, y];
-
-  const result = proj4(from.def, to.def, [x, y]);
-  return [Number(result[0].toFixed(9)), Number(result[1].toFixed(9))];
-}
 
 // ---------------------------------------------------------------------------
 // Geometry helpers (no PostGIS: the database has no geometry columns and adding it would
@@ -494,6 +424,129 @@ function validateGeographic(featureCollection) {
 }
 
 // ---------------------------------------------------------------------------
+// File import/export helpers (GeoJSON and CSV). Files are parsed in memory; the same feature
+// limit as Overpass imports applies, and a CRS must be named explicitly.
+// ---------------------------------------------------------------------------
+const IMPORT_FORMATS = new Set(['geojson', 'csv']);
+const GEOMETRY_TYPES = new Set(['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon']);
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (quoted) {
+      if (char === '"' && text[index + 1] === '"') { field += '"'; index += 1; }
+      else if (char === '"') quoted = false;
+      else field += char;
+      continue;
+    }
+    if (char === '"') { quoted = true; continue; }
+    if (char === ',') { row.push(field); field = ''; continue; }
+    if (char === '\n' || char === '\r') {
+      if (char === '\r' && text[index + 1] === '\n') index += 1;
+      row.push(field); field = '';
+      if (row.some(cell => cell.trim() !== '')) rows.push(row);
+      row = [];
+      continue;
+    }
+    field += char;
+  }
+  row.push(field);
+  if (row.some(cell => cell.trim() !== '')) rows.push(row);
+
+  if (rows.length === 0) return { error: 'The CSV file is empty.' };
+  const headers = rows[0].map(header => header.trim());
+  if (headers.some(header => !header)) return { error: 'Every CSV column needs a header.' };
+  if (rows.length === 1) return { error: 'The CSV file has a header but no data rows.' };
+  return { headers, records: rows.slice(1).map(cells => Object.fromEntries(headers.map((header, index) => [header, cells[index] === undefined ? '' : cells[index]]))) };
+}
+
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function firstCoordinate(geometry) {
+  let found = null;
+  const walk = value => {
+    if (found || !Array.isArray(value)) return;
+    if (typeof value[0] === 'number' && typeof value[1] === 'number') { found = value; return; }
+    value.forEach(walk);
+  };
+  if (geometry) walk(geometry.coordinates);
+  return found;
+}
+
+function validateFeatureCollection(featureCollection, sourceCrs) {
+  if (featureCollection.features.length === 0) return 'The file has no features.';
+  if (featureCollection.features.length > DEFAULTS.maxFeatures) {
+    return `A dataset is limited to ${DEFAULTS.maxFeatures} features; this file has ${featureCollection.features.length}.`;
+  }
+  for (let index = 0; index < featureCollection.features.length; index += 1) {
+    const geometry = featureCollection.features[index].geometry;
+    if (!geometry || !GEOMETRY_TYPES.has(geometry.type) || !Array.isArray(geometry.coordinates)) {
+      return `Feature ${index + 1} has no supported geometry.`;
+    }
+    const first = firstCoordinate(geometry);
+    if (!first) return `Feature ${index + 1} has empty coordinates.`;
+    try {
+      // For a geographic CRS this also checks longitude/latitude ranges; for a projected CRS it
+      // only checks that the pair is numeric.
+      transformPoint(first, sourceCrs, sourceCrs);
+    } catch (err) {
+      return `Feature ${index + 1}: ${err.message}`;
+    }
+  }
+  return null;
+}
+
+function featureCollectionFromCsv(parsed, sourceCrs) {
+  const definition = crsDefinition(sourceCrs);
+  const headers = parsed.headers;
+  const lower = new Map(headers.map(header => [header.toLowerCase(), header]));
+  const pick = candidates => candidates.map(name => lower.get(name)).find(Boolean);
+  const xKey = pick(isGeographic(definition)
+    ? ['lon', 'lng', 'long', 'longitude', 'x']
+    : ['easting', 'east', 'x', 'lon', 'longitude']);
+  const yKey = pick(isGeographic(definition)
+    ? ['lat', 'latitude', 'y']
+    : ['northing', 'north', 'y', 'lat', 'latitude']);
+  if (!xKey || !yKey) {
+    return {
+      error: `CSV needs ${isGeographic(definition) ? 'longitude and latitude' : 'easting and northing'} columns. Found: ${headers.join(', ')}.`
+    };
+  }
+
+  const coordinateKeys = new Set([xKey, yKey]);
+  const propertyKeys = headers.filter(header => !coordinateKeys.has(header));
+  const features = [];
+
+  for (let index = 0; index < parsed.records.length; index += 1) {
+    const record = parsed.records[index];
+    const x = Number(record[xKey]);
+    const y = Number(record[yKey]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      return { error: `Row ${index + 2}: ${xKey}/${yKey} are not numbers.` };
+    }
+    try {
+      transformPoint([x, y], sourceCrs, sourceCrs);
+    } catch (err) {
+      return { error: `Row ${index + 2}: ${err.message}` };
+    }
+    const properties = {};
+    propertyKeys.forEach(key => { properties[key] = record[key]; });
+    features.push({ type: 'Feature', properties, geometry: { type: 'Point', coordinates: [x, y] } });
+  }
+
+  return { featureCollection: { type: 'FeatureCollection', features } };
+}
+
+// ---------------------------------------------------------------------------
 
 module.exports = function createGisModule({
   app,
@@ -512,6 +565,9 @@ module.exports = function createGisModule({
   }
 }) {
   const asyncHandler = fn => (req, res) => fn(req, res).catch(err => serverError(res, `${req.method} ${req.path}`, err));
+  // Uploads are parsed in memory: the features are validated and stored as JSONB, and the
+  // original file is not kept on disk.
+  const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).single('file');
 
   // Per-user limits in front of shared public services. The Overpass limiter also protects
   // the server's own outbound capacity; the serialised queue keeps one user's import from
@@ -819,7 +875,28 @@ module.exports = function createGisModule({
     if (result.rows.length === 0) return res.status(404).json({ error: 'Dataset not found for this project.' });
 
     const row = result.rows[0];
-    res.json({ ...datasetSummary(row), geojson: row.geojson });
+    const storedCrs = crsDefinition(row.crs) ? row.crs : 'EPSG:4326';
+
+    // Storage keeps the dataset's own CRS. The map asks for EPSG:4326 so every stored dataset can
+    // be drawn on one Web Mercator canvas without assuming its coordinates are already geographic.
+    let geojson = row.geojson;
+    let bbox = row.bbox;
+    let displayCrs = storedCrs;
+    if (req.query.crs !== undefined) {
+      const target = crsDefinition(req.query.crs);
+      if (!target) return res.status(400).json({ error: `Unsupported CRS ${req.query.crs}. Choose one from GET /api/gis/crs.` });
+      displayCrs = target.code;
+      if (target.code !== storedCrs) {
+        try {
+          geojson = transformFeatureCollection(row.geojson, storedCrs, target.code);
+        } catch (err) {
+          return res.status(400).json({ error: err.message });
+        }
+        bbox = collectionBbox(geojson);
+      }
+    }
+
+    res.json({ ...datasetSummary(row), bbox, displayCrs, geojson });
   }));
 
   app.post('/api/gis/datasets/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
@@ -885,8 +962,106 @@ module.exports = function createGisModule({
     res.status(201).json(datasetSummary(result.rows[0]));
   }));
 
-  // Export: the stored GeoJSON, unchanged, with the provenance written into the file too.
-  app.get('/api/gis/datasets/:projectId/:datasetId/export', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+  // Import GeoJSON or CSV. The caller states the file's CRS; the stored dataset keeps that CRS and
+  // the map requests a 4326 view when it draws the layer.
+  app.post('/api/gis/datasets/:projectId/import', verifyToken, requireProjectAccess(req => req.params.projectId), (req, res, next) => {
+    importUpload(req, res, err => {
+      if (err) {
+        const message = err.code === 'LIMIT_FILE_SIZE'
+          ? 'The file is larger than 20 MB.'
+          : `The upload could not be read: ${err.message}`;
+        return res.status(400).json({ error: message });
+      }
+      next();
+    });
+  }, asyncHandler(async (req, res) => {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'Attach a GeoJSON or CSV file in the "file" field.' });
+    }
+
+    const sourceCrs = crsDefinition(req.body.crs);
+    if (!sourceCrs) {
+      return res.status(400).json({ error: 'crs is required and must be an EPSG code from GET /api/gis/crs; nothing is inferred from coordinates.' });
+    }
+
+    const text = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+    const requestedFormat = String(req.body.format || '').toLowerCase();
+    if (requestedFormat && !IMPORT_FORMATS.has(requestedFormat)) {
+      return res.status(400).json({ error: 'format must be geojson or csv.' });
+    }
+    const looksLikeJson = /^[\s\[{]/.test(text);
+    const format = requestedFormat || (looksLikeJson ? 'geojson' : 'csv');
+
+    let featureCollection;
+    if (format === 'geojson') {
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch (err) {
+        return res.status(400).json({ error: `The GeoJSON could not be parsed: ${err.message}` });
+      }
+      featureCollection = parsed.type === 'Feature'
+        ? { type: 'FeatureCollection', features: [parsed] }
+        : parsed;
+      if (!featureCollection || featureCollection.type !== 'FeatureCollection' || !Array.isArray(featureCollection.features)) {
+        return res.status(400).json({ error: 'GeoJSON must be a Feature or FeatureCollection.' });
+      }
+      const problem = validateFeatureCollection(featureCollection, sourceCrs.code);
+      if (problem) return res.status(400).json({ error: problem });
+    } else {
+      const parsed = parseCsv(text);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      const built = featureCollectionFromCsv(parsed, sourceCrs.code);
+      if (built.error) return res.status(400).json({ error: built.error });
+      featureCollection = built.featureCollection;
+    }
+
+    const name = String(req.body.name || req.file.originalname.replace(/\.[^.]+$/, '') || 'Imported dataset').trim().slice(0, 200)
+      || 'Imported dataset';
+    const bbox = collectionBbox(featureCollection);
+    const source = `File import (${format === 'geojson' ? 'GeoJSON' : 'CSV'})`;
+    const history = [{
+      at: new Date().toISOString(),
+      action: 'import',
+      source,
+      fileName: req.file.originalname,
+      crs: sourceCrs.code,
+      featureCount: featureCollection.features.length,
+      note: `Imported from ${req.file.originalname} in ${sourceCrs.code}. Coordinates stored as declared; the map transforms them to EPSG:4326 for display.`
+    }];
+
+    const result = await pool.query(
+      `INSERT INTO gis_datasets
+         (project_id, name, source, source_query, licence, attribution, crs, geometry_type,
+          feature_count, bbox, geojson, processing_history)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+       RETURNING *`,
+      [
+        req.projectId,
+        name,
+        source,
+        JSON.stringify({ fileName: req.file.originalname, format, crs: sourceCrs.code }),
+        'Not stated by importer',
+        '',
+        sourceCrs.code,
+        geometryKind(featureCollection),
+        featureCollection.features.length,
+        JSON.stringify(bbox),
+        JSON.stringify(featureCollection),
+        JSON.stringify(history)
+      ]
+    );
+
+    res.status(201).json(datasetSummary(result.rows[0]));
+  }));
+
+  // Reproject stored coordinates into another supported CRS. This changes the dataset in place;
+  // the workspace client asks for an EPSG:4326 view, so open layers keep rendering correctly.
+  app.post('/api/gis/datasets/:projectId/:datasetId/reproject', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const target = crsDefinition(req.body.targetCrs);
+    if (!target) {
+      return res.status(400).json({ error: 'targetCrs is required and must be an EPSG code from GET /api/gis/crs.' });
+    }
     const result = await pool.query(
       'SELECT * FROM gis_datasets WHERE project_id = $1 AND id = $2',
       [req.projectId, req.params.datasetId]
@@ -894,10 +1069,103 @@ module.exports = function createGisModule({
     if (result.rows.length === 0) return res.status(404).json({ error: 'Dataset not found for this project.' });
 
     const row = result.rows[0];
-    const geojson = {
-      ...row.geojson,
+    const sourceCrs = crsDefinition(row.crs);
+    if (!sourceCrs) {
+      return res.status(400).json({ error: `The dataset's stored CRS ${row.crs} is not in the supported registry.` });
+    }
+    if (sourceCrs.code === target.code) {
+      return res.status(400).json({ error: `The dataset is already stored in ${target.code}.` });
+    }
+
+    let geojson;
+    try {
+      geojson = transformFeatureCollection(row.geojson, sourceCrs.code, target.code);
+    } catch (err) {
+      return res.status(400).json({ error: `Reprojection failed: ${err.message}` });
+    }
+    const bbox = collectionBbox(geojson);
+    const history = Array.isArray(row.processing_history) ? row.processing_history : [];
+    history.push({
+      at: new Date().toISOString(),
+      action: 'reproject',
+      from: sourceCrs.code,
+      to: target.code,
+      featureCount: toNum(row.feature_count),
+      note: 'Stored coordinates transformed with proj4js; no datum grid shift was applied.'
+    });
+
+    const updated = await pool.query(
+      `UPDATE gis_datasets
+          SET crs = $3, bbox = $4, geojson = $5, processing_history = $6, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND project_id = $2
+        RETURNING *`,
+      [row.id, req.projectId, target.code, JSON.stringify(bbox), JSON.stringify(geojson), JSON.stringify(history)]
+    );
+
+    res.json({ ...datasetSummary(updated.rows[0]), previousCrs: sourceCrs.code });
+  }));
+
+  // Export as GeoJSON or CSV, in the stored CRS or a requested one. The provenance is written
+  // into the GeoJSON file; CSV carries the coordinate columns and the feature properties.
+  app.get('/api/gis/datasets/:projectId/:datasetId/export', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const format = String(req.query.format || 'geojson').toLowerCase();
+    if (!['geojson', 'csv'].includes(format)) {
+      return res.status(400).json({ error: 'format must be geojson or csv.' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM gis_datasets WHERE project_id = $1 AND id = $2',
+      [req.projectId, req.params.datasetId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Dataset not found for this project.' });
+
+    const row = result.rows[0];
+    const storedCrs = crsDefinition(row.crs) ? row.crs : 'EPSG:4326';
+    let targetCrs = storedCrs;
+    if (req.query.crs !== undefined) {
+      const target = crsDefinition(req.query.crs);
+      if (!target) return res.status(400).json({ error: `Unsupported CRS ${req.query.crs}. Choose one from GET /api/gis/crs.` });
+      targetCrs = target.code;
+    }
+
+    let geojson = row.geojson;
+    if (targetCrs !== storedCrs) {
+      try {
+        geojson = transformFeatureCollection(row.geojson, storedCrs, targetCrs);
+      } catch (err) {
+        return res.status(400).json({ error: `Export transform failed: ${err.message}` });
+      }
+    }
+
+    const fileName = `${row.name.replace(/[^a-z0-9._-]+/gi, '-').toLowerCase() || 'dataset'}`;
+
+    if (format === 'csv') {
+      const propertyKeys = [];
+      (geojson.features || []).forEach(feature => {
+        Object.keys(feature.properties || {}).forEach(key => {
+          if (!propertyKeys.includes(key)) propertyKeys.push(key);
+        });
+      });
+      const header = ['geometry_type', 'x', 'y', ...propertyKeys];
+      const lines = [header.map(csvCell).join(',')];
+      (geojson.features || []).forEach(feature => {
+        const coordinate = firstCoordinate(feature.geometry) || [];
+        lines.push([
+          feature.geometry?.type || '',
+          coordinate[0] === undefined ? '' : coordinate[0],
+          coordinate[1] === undefined ? '' : coordinate[1],
+          ...propertyKeys.map(key => feature.properties ? feature.properties[key] : '')
+        ].map(csvCell).join(','));
+      });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}.csv"`);
+      return res.send(`${lines.join('\r\n')}\r\n`);
+    }
+
+    const exported = {
+      ...geojson,
       name: row.name,
-      crs: row.crs,
+      crs: targetCrs,
       metadata: {
         source: row.source,
         licence: row.licence,
@@ -905,14 +1173,16 @@ module.exports = function createGisModule({
         importedAt: row.created_at,
         updatedAt: row.updated_at,
         projectId: row.project_id,
-        featureCount: toNum(row.feature_count)
+        featureCount: toNum(row.feature_count),
+        storedCrs,
+        exportCrs: targetCrs,
+        coordinateNote: 'x/y are longitude/latitude in EPSG:4326 and easting/northing in projected CRSs.'
       }
     };
 
-    const fileName = `${row.name.replace(/[^a-z0-9._-]+/gi, '-').toLowerCase() || 'dataset'}.geojson`;
     res.setHeader('Content-Type', 'application/geo+json; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-    res.send(JSON.stringify(geojson, null, 2));
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.geojson"`);
+    res.send(JSON.stringify(exported, null, 2));
   }));
 
   // Refresh: re-run the stored query and replace the features, keeping the history.
