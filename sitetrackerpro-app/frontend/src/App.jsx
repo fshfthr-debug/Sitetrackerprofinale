@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import GisWorkspace from './gis/GisWorkspace';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { buildCsv, downloadCsv, safeFilePart, todayStamp } from './csv';
@@ -83,6 +84,9 @@ export default function SiteTrackerPro() {
         <button onClick={() => setCurrentScreen('3d-viewer')} style={currentScreen === '3d-viewer' ? styles.navButtonActive : styles.navButton}>
           🎨 3D Viewer
         </button>
+        <button onClick={() => setCurrentScreen('gis')} style={currentScreen === 'gis' ? styles.navButtonActive : styles.navButton}>
+          🗺️ GIS
+        </button>
         <button onClick={() => setCurrentScreen('materials')} style={currentScreen === 'materials' ? styles.navButtonActive : styles.navButton}>
           📦 Materials
         </button>
@@ -108,6 +112,7 @@ export default function SiteTrackerPro() {
         {currentScreen === 'project-dashboard' && <ProjectDashboardScreen token={token} projects={projects} />}
         {currentScreen === 'surveying' && <SurveyingControlPointsScreen token={token} projects={projects} />}
         {currentScreen === '3d-viewer' && <ThreeDViewerScreen token={token} projects={projects} />}
+        {currentScreen === 'gis' && <GisWorkspace token={token} projects={projects} />}
         {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} />}
         {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} />}
         {currentScreen === 'account' && <AccountScreen token={token} />}

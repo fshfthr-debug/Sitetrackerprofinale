@@ -1,0 +1,3 @@
+backend/basemaps/*.json
+backend/basemaps/*.json.gz
+__pycache__/

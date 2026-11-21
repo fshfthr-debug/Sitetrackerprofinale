@@ -684,6 +684,29 @@ module.exports = function createTerrainModule({
     const crs = crsDefinition(row.epsg);
     const meters = pixelSizesMetres(row.bounds, crs || { epsg: 0 }, row.width, row.height, toNum(row.pixel_size_x), toNum(row.pixel_size_y));
 
+    // The map renders in EPSG:4326, so a projected DEM also needs its extent in WGS 84. This is a
+    // display transform only; the stored bounds and all analysis stay in the DEM's own CRS.
+    let boundsWgs84 = null;
+    if (crs) {
+      try {
+        const corners = [
+          [row.bounds[0], row.bounds[1]],
+          [row.bounds[2], row.bounds[1]],
+          [row.bounds[2], row.bounds[3]],
+          [row.bounds[0], row.bounds[3]]
+        ].map(([x, y]) => {
+          if (crs.epsg === 4326) return [x, y];
+          return proj4(crs.def, '+proj=longlat +datum=WGS84 +no_defs', [x, y]);
+        });
+        const lons = corners.map(pair => Number(pair[0]));
+        const lats = corners.map(pair => Number(pair[1]));
+        boundsWgs84 = [Math.min(...lons), Math.min(...lats), Math.max(...lons), Math.max(...lats)];
+        if (boundsWgs84.some(value => !Number.isFinite(value))) boundsWgs84 = null;
+      } catch (err) {
+        boundsWgs84 = null;
+      }
+    }
+
     res.json({
       surveyId: row.id,
       projectId: row.project_id,
@@ -691,6 +714,7 @@ module.exports = function createTerrainModule({
       crsName: crs ? crs.name : null,
       verticalDatum: row.vertical_datum,
       bounds: row.bounds,
+      boundsWgs84,
       fullResolution: { width: row.width, height: row.height, pixelSize: { x: toNum(row.pixel_size_x), y: toNum(row.pixel_size_y) } },
       preview: {
         width: row.preview_width,

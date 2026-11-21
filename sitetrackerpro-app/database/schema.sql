@@ -283,6 +283,37 @@ CREATE TABLE IF NOT EXISTS gis_osm_cache (
 );
 
 CREATE INDEX IF NOT EXISTS idx_gis_datasets_project ON gis_datasets(project_id);
+-- Saved GIS workspaces (map views) and their ordered layer stacks. Additive: no changes to other modules.
+CREATE TABLE IF NOT EXISTS gis_projects (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name VARCHAR(160) NOT NULL,
+  description TEXT,
+  working_crs VARCHAR(40) NOT NULL DEFAULT 'EPSG:4326',
+  vertical_datum VARCHAR(80),
+  view_state JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_by INTEGER REFERENCES users(id),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS gis_layers (
+  id SERIAL PRIMARY KEY,
+  gis_project_id INTEGER NOT NULL REFERENCES gis_projects(id) ON DELETE CASCADE,
+  name VARCHAR(160) NOT NULL,
+  kind VARCHAR(24) NOT NULL,
+  dataset_id INTEGER REFERENCES gis_datasets(id) ON DELETE SET NULL,
+  terrain_id INTEGER REFERENCES terrain_surveys(id) ON DELETE SET NULL,
+  source_ref JSONB,
+  style JSONB NOT NULL DEFAULT '{}'::jsonb,
+  opacity NUMERIC(4,3) NOT NULL DEFAULT 1,
+  visible BOOLEAN NOT NULL DEFAULT TRUE,
+  z_index INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_gis_projects_project ON gis_projects(project_id);
+CREATE INDEX IF NOT EXISTS idx_gis_layers_workspace ON gis_layers(gis_project_id, z_index);
+
 CREATE INDEX IF NOT EXISTS idx_gis_cache_expiry ON gis_osm_cache(expires_at);
 
 -- ==================== DEM / TERRAIN SURVEYS ====================
