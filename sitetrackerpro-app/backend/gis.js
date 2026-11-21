@@ -459,7 +459,7 @@ function parseCsv(text) {
   if (row.some(cell => cell.trim() !== '')) rows.push(row);
 
   if (rows.length === 0) return { error: 'The CSV file is empty.' };
-  const headers = rows[0].map(header => header.trim());
+  const headers = rows[0].map(header => header.trim().replace(/^\ufeff/, ''));
   if (headers.some(header => !header)) return { error: 'Every CSV column needs a header.' };
   if (rows.length === 1) return { error: 'The CSV file has a header but no data rows.' };
   return { headers, records: rows.slice(1).map(cells => Object.fromEntries(headers.map((header, index) => [header, cells[index] === undefined ? '' : cells[index]]))) };
@@ -631,8 +631,25 @@ module.exports = function createGisModule({
         expires_at TIMESTAMP NOT NULL
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS gis_saved_queries (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name VARCHAR(160) NOT NULL,
+        categories JSONB NOT NULL,
+        bbox JSONB NOT NULL,
+        created_by INTEGER,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    // Additive survey-GIS columns: existing points keep working unchanged.
+    await pool.query('ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS name VARCHAR(120)');
+    await pool.query('ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS is_benchmark BOOLEAN DEFAULT FALSE');
+    await pool.query('ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS vertical_datum VARCHAR(80)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_gis_datasets_project ON gis_datasets(project_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_gis_cache_expiry ON gis_osm_cache(expires_at)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_gis_saved_queries_project ON gis_saved_queries(project_id)');
   }
 
   function datasetSummary(row) {
@@ -676,6 +693,62 @@ module.exports = function createGisModule({
       note: 'OpenStreetMap features are contextual: they are not survey measurements and must not be used as verified construction dimensions.'
     });
   });
+
+  // ------------------------------ saved OSM queries -------------------------
+  // A saved query stores the category selection and area, not results. Running it goes
+  // through the same preview endpoint, cache and rate limits as an unsaved query.
+  const savedQueryJson = row => ({
+    id: row.id,
+    projectId: row.project_id,
+    name: row.name,
+    categories: row.categories,
+    bbox: row.bbox,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  });
+
+  app.get('/api/gis/queries/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const result = await pool.query(
+      'SELECT * FROM gis_saved_queries WHERE project_id = $1 ORDER BY updated_at DESC, id DESC',
+      [req.projectId]
+    );
+    res.json({ queries: result.rows.map(savedQueryJson), count: result.rows.length });
+  }));
+
+  app.post('/api/gis/queries/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const name = String(req.body.name || '').trim().slice(0, 160);
+    if (!name) return res.status(400).json({ error: 'Give the saved query a name.' });
+
+    const requested = Array.isArray(req.body.categories) ? req.body.categories : [];
+    const categories = requested.filter(key => CATEGORY_BY_KEY.has(key));
+    if (categories.length === 0) {
+      return res.status(400).json({ error: 'Select at least one feature category.', available: CATEGORIES.map(c => c.key) });
+    }
+
+    const parsed = parseBbox(req.body.bbox);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+    const count = await pool.query('SELECT COUNT(*)::int AS count FROM gis_saved_queries WHERE project_id = $1', [req.projectId]);
+    if (count.rows[0].count >= 100) {
+      return res.status(400).json({ error: 'This project already has 100 saved queries. Delete one before saving another.' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO gis_saved_queries (project_id, name, categories, bbox, created_by)
+       VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+      [req.projectId, name, JSON.stringify(categories), JSON.stringify(parsed.bbox), req.user?.id || null]
+    );
+    res.status(201).json(savedQueryJson(result.rows[0]));
+  }));
+
+  app.delete('/api/gis/queries/:projectId/:queryId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const result = await pool.query(
+      'DELETE FROM gis_saved_queries WHERE project_id = $1 AND id = $2',
+      [req.projectId, req.params.queryId]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Saved query not found for this project.' });
+    res.json({ success: true, deleted: result.rowCount });
+  }));
 
   // ------------------------------ place search ------------------------------
   // Nominatim proxy. Only called on an explicit search, min length 3, max 5 results, with a
@@ -1280,15 +1353,17 @@ module.exports = function createGisModule({
         geometry: { type: 'Point', coordinates: [toNum(row.longitude), toNum(row.latitude)] },
         properties: {
           pointId: `CP-${row.id}`,
+          name: row.name || `CP-${row.id}`,
           latitude: toNum(row.latitude),
           longitude: toNum(row.longitude),
           benchmarkElevation: row.benchmark_elevation === null ? null : toNum(row.benchmark_elevation),
           groundLevel: row.ground_level === null ? null : toNum(row.ground_level),
           floorLevel: row.floor_level === null ? null : toNum(row.floor_level),
           foundationDepth: row.foundation_depth === null ? null : toNum(row.foundation_depth),
+          isBenchmark: Boolean(row.is_benchmark),
+          verticalDatum: row.vertical_datum || null,
           recordedAt: row.created_at,
-          dataClass: 'survey',
-          verticalDatum: null
+          dataClass: 'survey'
         }
       }));
 
@@ -1298,9 +1373,138 @@ module.exports = function createGisModule({
       crs: 'EPSG:4326',
       crsNote: 'The surveying table stores latitude/longitude columns; no other CRS is recorded for these points.',
       verticalDatum: null,
-      verticalDatumNote: 'No vertical datum is stored with these elevations; they are shown as recorded, not converted.',
+      verticalDatumNote: 'Vertical datums are stored per point where known; elevations are shown as recorded and are never converted.',
+      benchmarkCount: features.filter(feature => feature.properties.isBenchmark).length,
+      controlCount: features.filter(feature => !feature.properties.isBenchmark).length,
       count: features.length
     });
+  }));
+
+  // CSV import for survey control points. Accepts geographic lon/lat or projected
+  // easting/northing in any supported CRS; every point is transformed to EPSG:4326 for
+  // storage, and the source CRS is reported back rather than assumed.
+  app.post('/api/gis/survey-points/:projectId/import', verifyToken, requireProjectAccess(req => req.params.projectId), importUpload, asyncHandler(async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'Choose a CSV file to import.' });
+
+    const crsCode = String(req.body.crs || 'EPSG:4326').trim().toUpperCase();
+    const definition = crsDefinition(crsCode);
+    if (!definition) {
+      return res.status(400).json({ error: `Unknown CRS “${crsCode}”. Use one of the CRS codes offered by the workspace.` });
+    }
+
+    const verticalDatum = String(req.body.verticalDatum || '').trim().slice(0, 80) || null;
+    const parsed = parseCsv(req.file.buffer.toString('utf8'));
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+    if (parsed.records.length > 2000) {
+      return res.status(400).json({ error: `This file has ${parsed.records.length} rows; import at most 2,000 control points at a time.` });
+    }
+
+    const headerMap = new Map(parsed.headers.map(header => [header.toLowerCase().replace(/[\s-]+/g, '_'), header]));
+    const pick = (...names) => names.map(name => headerMap.get(name)).find(Boolean);
+    const nameKey = pick('name', 'point_name', 'point_id', 'point', 'control_point', 'id');
+    const elevationKey = pick('elevation', 'benchmark_elevation', 'elevation_m', 'z', 'height', 'level');
+    const benchmarkKey = pick('benchmark', 'is_benchmark', 'point_type', 'type');
+    const datumKey = pick('vertical_datum', 'datum');
+    const xKey = isGeographic(definition)
+      ? pick('longitude', 'lon', 'long', 'x')
+      : pick('easting', 'east', 'x');
+    const yKey = isGeographic(definition)
+      ? pick('latitude', 'lat', 'y')
+      : pick('northing', 'north', 'y');
+
+    if (!xKey || !yKey) {
+      return res.status(400).json({
+        error: isGeographic(definition)
+          ? 'CSV needs longitude and latitude columns (or lon/lat, x/y).'
+          : `CSV for ${crsCode} needs easting and northing columns (or x/y).`,
+        example: isGeographic(definition)
+          ? 'name,longitude,latitude,elevation,benchmark'
+          : 'name,easting,northing,elevation,benchmark'
+      });
+    }
+
+    const points = [];
+    for (let index = 0; index < parsed.records.length; index += 1) {
+      const record = parsed.records[index];
+      const rowNumber = index + 2;
+      const x = Number(record[xKey]);
+      const y = Number(record[yKey]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        return res.status(400).json({ error: `Row ${rowNumber}: ${xKey}/${yKey} are not numbers.` });
+      }
+      let coordinate;
+      try {
+        coordinate = transformPoint([x, y], crsCode, 'EPSG:4326');
+      } catch (err) {
+        return res.status(400).json({ error: `Row ${rowNumber}: ${err.message}` });
+      }
+      const [lon, lat] = coordinate;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+        return res.status(400).json({ error: `Row ${rowNumber}: coordinates are outside the valid latitude/longitude range.` });
+      }
+
+      const rawElevation = elevationKey ? String(record[elevationKey] ?? '').trim() : '';
+      const elevation = rawElevation === '' ? null : Number(rawElevation);
+      if (elevation !== null && !Number.isFinite(elevation)) {
+        return res.status(400).json({ error: `Row ${rowNumber}: elevation “${rawElevation}” is not a number.` });
+      }
+
+      const benchmarkValue = benchmarkKey ? String(record[benchmarkKey] ?? '').trim() : '';
+      points.push({
+        name: String((nameKey ? record[nameKey] : '') || `CP-${index + 1}`).trim().slice(0, 120) || `CP-${index + 1}`,
+        lon,
+        lat,
+        elevation,
+        isBenchmark: /^(1|true|yes|y|bm|benchmark)$/i.test(benchmarkValue),
+        verticalDatum: datumKey && String(record[datumKey] || '').trim()
+          ? String(record[datumKey]).trim().slice(0, 80)
+          : verticalDatum
+      });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inserted = [];
+      for (const point of points) {
+        const result = await client.query(
+          `INSERT INTO surveying_control_points
+             (project_id, name, latitude, longitude, benchmark_elevation, is_benchmark, vertical_datum)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id, name, latitude, longitude, benchmark_elevation, is_benchmark, vertical_datum`,
+          [req.projectId, point.name, point.lat, point.lon, point.elevation, point.isBenchmark, point.verticalDatum]
+        );
+        inserted.push(result.rows[0]);
+      }
+      await client.query('COMMIT');
+      const datums = [...new Set(inserted.map(row => row.vertical_datum).filter(Boolean))];
+      res.status(201).json({
+        imported: inserted.length,
+        sourceCrs: crsCode,
+        storedCrs: 'EPSG:4326',
+        verticalDatum: verticalDatum || (datums.length === 1 ? datums[0] : null),
+        verticalDatums: datums,
+        benchmarkCount: inserted.filter(row => row.is_benchmark).length,
+        points: inserted.map(row => ({
+          pointId: `CP-${row.id}`,
+          id: row.id,
+          name: row.name,
+          latitude: toNum(row.latitude),
+          longitude: toNum(row.longitude),
+          benchmarkElevation: row.benchmark_elevation === null ? null : toNum(row.benchmark_elevation),
+          isBenchmark: Boolean(row.is_benchmark),
+          verticalDatum: row.vertical_datum || null
+        })),
+        note: datums.length > 0
+          ? `Elevations are stored as recorded in ${datums.map(datum => `“${datum}”`).join(', ')}; they were not converted.`
+          : 'No vertical datum was supplied; elevations are stored as recorded, not converted.'
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
   }));
 
   // ------------------------------ georeferencing ---------------------------

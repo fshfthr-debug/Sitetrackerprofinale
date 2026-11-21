@@ -819,11 +819,13 @@ module.exports = function createTerrainModule({
       for (const point of points.rows) {
         const lon = toNum(point.longitude);
         const lat = toNum(point.latitude);
+        const pointName = point.name || `CP-${point.id}`;
+        const isBenchmark = Boolean(point.is_benchmark);
         let projected;
         try {
           projected = transformWgs84To(row.epsg, lon, lat);
         } catch (err) {
-          results.push({ pointId: point.id, status: 'error', error: err.message });
+          results.push({ pointId: point.id, pointName, isBenchmark, status: 'error', error: err.message });
           continue;
         }
 
@@ -836,6 +838,8 @@ module.exports = function createTerrainModule({
         if (px < 0 || py < 0 || px >= row.width || py >= row.height) {
           results.push({
             pointId: point.id,
+            pointName,
+            isBenchmark,
             latitude: lat,
             longitude: lon,
             benchmarkElevation: benchmark,
@@ -850,7 +854,7 @@ module.exports = function createTerrainModule({
 
         if (isNoData(demElevation, noData)) {
           results.push({
-            pointId: point.id, latitude: lat, longitude: lon, benchmarkElevation: benchmark,
+            pointId: point.id, pointName, isBenchmark, latitude: lat, longitude: lon, benchmarkElevation: benchmark,
             status: 'nodata', note: 'The DEM cell at this point is NoData.'
           });
           continue;
@@ -858,11 +862,14 @@ module.exports = function createTerrainModule({
 
         results.push({
           pointId: point.id,
+          pointName,
+          isBenchmark,
           latitude: lat,
           longitude: lon,
           projected: { x: projected[0], y: projected[1], crs: row.crs },
           demElevation,
           benchmarkElevation: benchmark,
+          benchmarkDatum: point.vertical_datum || null,
           difference: benchmark === null ? null : Number((benchmark - demElevation).toFixed(3)),
           status: benchmark === null ? 'no-benchmark' : 'compared',
           note: benchmark === null
@@ -874,15 +881,21 @@ module.exports = function createTerrainModule({
 
     const compared = results.filter(item => item.status === 'compared');
     const differences = compared.map(item => item.difference);
+    const benchmarkDatums = [...new Set(points.rows.map(point => point.vertical_datum).filter(Boolean))];
 
     res.json({
       surveyId: row.id,
       projectId: row.project_id,
       crs: row.crs,
       verticalDatum: row.vertical_datum,
-      verticalDatumNote: row.vertical_datum
-        ? `The DEM states vertical datum “${row.vertical_datum}”; the surveying table records no datum. A large offset may be a datum difference.`
-        : 'No vertical datum is recorded for this DEM, and the surveying table records none either. Elevations are compared as stored.',
+      benchmarkDatums,
+      verticalDatumNote: row.vertical_datum && benchmarkDatums.length > 0
+        ? `The DEM states vertical datum “${row.vertical_datum}”; the control points record ${benchmarkDatums.map(datum => `“${datum}”`).join(', ')}. A large offset may be a datum difference; nothing has been converted.`
+        : row.vertical_datum
+          ? `The DEM states vertical datum “${row.vertical_datum}”; the control points record no vertical datum. A large offset may be a datum difference.`
+          : benchmarkDatums.length > 0
+            ? `The DEM records no vertical datum; the control points record ${benchmarkDatums.map(datum => `“${datum}”`).join(', ')}. Elevations are compared as stored.`
+            : 'No vertical datum is recorded for this DEM, and the control points record none either. Elevations are compared as stored.',
       results,
       summary: compared.length > 0 ? {
         compared: compared.length,

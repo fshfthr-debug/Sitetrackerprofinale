@@ -52,9 +52,12 @@ CREATE TABLE IF NOT EXISTS bim_components (
 CREATE TABLE IF NOT EXISTS surveying_control_points (
   id SERIAL PRIMARY KEY,
   project_id INTEGER NOT NULL REFERENCES projects(id),
+  name VARCHAR(120),
   latitude DECIMAL(10,8),
   longitude DECIMAL(11,8),
   benchmark_elevation DECIMAL(10,2),
+  is_benchmark BOOLEAN DEFAULT FALSE,
+  vertical_datum VARCHAR(80),
   ground_level DECIMAL(10,2),
   floor_level DECIMAL(10,2),
   foundation_depth DECIMAL(10,2),
@@ -282,7 +285,19 @@ CREATE TABLE IF NOT EXISTS gis_osm_cache (
   expires_at TIMESTAMP NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS gis_saved_queries (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name VARCHAR(160) NOT NULL,
+  categories JSONB NOT NULL,
+  bbox JSONB NOT NULL,
+  created_by INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_gis_datasets_project ON gis_datasets(project_id);
+CREATE INDEX IF NOT EXISTS idx_gis_saved_queries_project ON gis_saved_queries(project_id);
 -- Saved GIS workspaces (map views) and their ordered layer stacks. Additive: no changes to other modules.
 CREATE TABLE IF NOT EXISTS gis_projects (
   id SERIAL PRIMARY KEY,

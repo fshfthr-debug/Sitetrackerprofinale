@@ -3,6 +3,8 @@ import axios from 'axios';
 import maplibregl from 'maplibre-gl';
 import proj4 from 'proj4';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import OsmExplorer from './OsmExplorer';
+import SurveyGis from './SurveyGis';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 const DEFAULT_CENTER = [38.78, 9.02];
@@ -173,6 +175,9 @@ export default function GisWorkspace({ token, projects }) {
   const [datasets, setDatasets] = useState([]);
   const [terrains, setTerrains] = useState([]);
   const [surveyCount, setSurveyCount] = useState(0);
+  const [survey, setSurvey] = useState(null);
+  const [view, setView] = useState('workspace');
+  const [osmPreview, setOsmPreview] = useState(null);
   const [payloads, setPayloads] = useState({});
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState('');
@@ -319,6 +324,7 @@ export default function GisWorkspace({ token, projects }) {
         setWorkspaces(workspaceResponse.data);
         setDatasets(datasetResponse.data);
         setTerrains(terrainResponse.data);
+        setSurvey(surveyResponse.data);
         setSurveyCount(surveyResponse.data.count || 0);
         setCrsList(crsResponse.data.crs || []);
         if (workspaceResponse.data.length > 0) setWorkspaceId(String(workspaceResponse.data[0].id));
@@ -372,6 +378,16 @@ export default function GisWorkspace({ token, projects }) {
     setWorkspaces(response.data);
     return response.data;
   };
+
+  const refreshSurvey = async () => {
+    if (!projectId) return null;
+    const response = await axios.get(`${API_URL}/api/gis/survey-points/${projectId}`, { headers: authHeaders });
+    setSurvey(response.data);
+    setSurveyCount(response.data.count || 0);
+    setDataVersion(version => version + 1);
+    return response.data;
+  };
+
 
   // ---------------------------------------------------------------------------
   // Layer payloads (GeoJSON, survey points, DEM image)
@@ -467,10 +483,16 @@ export default function GisWorkspace({ token, projects }) {
           id: `${sourceId}-circle`, type: 'circle', source: sourceId, filter: geometryFilters.point,
           layout: { visibility },
           paint: {
-            'circle-color': colour,
-            'circle-radius': layer.kind === 'survey' ? 6 : 5,
+            'circle-color': layer.kind === 'survey'
+              ? ['case', ['==', ['get', 'isBenchmark'], true], '#c92a2a', '#0b7285']
+              : colour,
+            'circle-radius': layer.kind === 'survey'
+              ? ['case', ['==', ['get', 'isBenchmark'], true], 7, 5]
+              : 5,
             'circle-stroke-color': '#ffffff',
-            'circle-stroke-width': 1.5,
+            'circle-stroke-width': layer.kind === 'survey'
+              ? ['case', ['==', ['get', 'isBenchmark'], true], 2, 1.5]
+              : 1.5,
             'circle-opacity': layer.opacity
           }
         });
@@ -489,6 +511,51 @@ export default function GisWorkspace({ token, projects }) {
       }
     });
   }, [mapReady, styleVersion, workspace, payloads]);
+
+  // Ephemeral OSM preview. It is deliberately not a workspace layer until it is saved as a
+  // dataset, so previewing never changes the project by itself.
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+    ['fill', 'line', 'circle'].forEach(suffix => {
+      if (map.getLayer(`gism-osm-${suffix}`)) map.removeLayer(`gism-osm-${suffix}`);
+    });
+    if (map.getSource('gism-osm')) map.removeSource('gism-osm');
+    if (!osmPreview || !Array.isArray(osmPreview.features) || osmPreview.features.length === 0) return;
+
+    map.addSource('gism-osm', { type: 'geojson', data: osmPreview });
+    map.addLayer({
+      id: 'gism-osm-fill', type: 'fill', source: 'gism-osm',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': '#2b8a3e', 'fill-opacity': 0.25 }
+    });
+    map.addLayer({
+      id: 'gism-osm-line', type: 'line', source: 'gism-osm',
+      filter: ['==', ['geometry-type'], 'LineString'],
+      paint: { 'line-color': '#2b8a3e', 'line-width': 2 }
+    });
+    map.addLayer({
+      id: 'gism-osm-circle', type: 'circle', source: 'gism-osm',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-color': '#2b8a3e', 'circle-radius': 4, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 }
+    });
+
+    let west = Infinity; let south = Infinity; let east = -Infinity; let north = -Infinity;
+    const walk = value => {
+      if (!Array.isArray(value)) return;
+      if (typeof value[0] === 'number' && typeof value[1] === 'number') {
+        west = Math.min(west, value[0]); east = Math.max(east, value[0]);
+        south = Math.min(south, value[1]); north = Math.max(north, value[1]);
+        return;
+      }
+      value.forEach(walk);
+    };
+    osmPreview.features.forEach(feature => feature.geometry && walk(feature.geometry.coordinates));
+    if ([west, south, east, north].every(Number.isFinite)) {
+      map.fitBounds([[west, south], [east, north]], { padding: 40, duration: 500, maxZoom: 16 });
+    }
+  }, [mapReady, styleVersion, osmPreview]);
 
   // Restore the saved view once per workspace, after its layers exist.
   useEffect(() => {
@@ -951,7 +1018,30 @@ export default function GisWorkspace({ token, projects }) {
             )}
           </div>
 
-          {workspace && (
+          {projectId && (
+            <div style={{ display: 'flex', gap: '6px', marginTop: '12px', flexWrap: 'wrap' }} role="tablist" aria-label="GIS tools">
+              {[['workspace', 'Map workspace'], ['osm', 'OSM Explorer'], ['survey', 'Survey GIS']].map(([key, label]) => (
+                <button
+                  key={key}
+                  id={`gis-tab-${key}`}
+                  role="tab"
+                  aria-selected={view === key}
+                  onClick={() => setView(key)}
+                  style={{
+                    padding: '6px 10px', borderRadius: '5px', cursor: 'pointer', fontSize: '12px',
+                    border: view === key ? '1px solid #d9480f' : '1px solid #dfe6ec',
+                    background: view === key ? '#fff4ec' : '#fff',
+                    color: view === key ? '#8a2b12' : '#26313c',
+                    fontWeight: view === key ? 600 : 400
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {workspace && view === 'workspace' && (
             <>
               <div style={{ ...styles.card, marginTop: '12px' }}>
                 <h3 style={{ marginTop: 0 }}>Coordinate system</h3>
@@ -1340,6 +1430,41 @@ export default function GisWorkspace({ token, projects }) {
                 )}
               </div>
             </>
+          )}
+
+          {view === 'osm' && (
+            <OsmExplorer
+              projectId={projectId}
+              authHeaders={authHeaders}
+              onPreview={setOsmPreview}
+              onSavedDataset={async dataset => {
+                await refreshDatasets();
+                if (workspaceId) await addLayer({ kind: 'dataset', datasetId: dataset.id, name: dataset.name });
+              }}
+              onNotice={setNotice}
+              onError={setError}
+              getBbox={() => {
+                const bounds = mapRef.current && mapRef.current.getBounds();
+                return bounds ? [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()] : null;
+              }}
+            />
+          )}
+
+          {view === 'survey' && (
+            <SurveyGis
+              projectId={projectId}
+              authHeaders={authHeaders}
+              crsList={crsList}
+              terrains={terrains}
+              survey={survey}
+              onSurveyChanged={refreshSurvey}
+              onAddSurveyLayer={() => {
+                if (!workspaceId) { setError('Choose or create a workspace before adding survey points to the map.'); return; }
+                addLayer({ kind: 'survey', name: 'Survey control points' });
+              }}
+              onNotice={setNotice}
+              onError={setError}
+            />
           )}
         </div>
 
