@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS surveying_control_points (
   floor_level DECIMAL(10,2),
   foundation_depth DECIMAL(10,2),
   building_footprint DECIMAL(10,2),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  status VARCHAR(20) NOT NULL DEFAULT 'submitted',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Earthworks Calculations table (NEW)
@@ -258,6 +260,19 @@ CREATE TABLE IF NOT EXISTS gis_datasets (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS gis_alignment_points (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  control_point_id INTEGER NOT NULL REFERENCES surveying_control_points(id) ON DELETE CASCADE,
+  model_east DOUBLE PRECISION NOT NULL,
+  model_north DOUBLE PRECISION NOT NULL,
+  model_up DOUBLE PRECISION,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (project_id, control_point_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_gis_alignment_points_project ON gis_alignment_points(project_id);
 
 CREATE TABLE IF NOT EXISTS gis_georeferencing (
   project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,

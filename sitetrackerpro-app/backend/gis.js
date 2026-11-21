@@ -605,6 +605,21 @@ module.exports = function createGisModule({
       )
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS gis_alignment_points (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        control_point_id INTEGER NOT NULL REFERENCES surveying_control_points(id) ON DELETE CASCADE,
+        model_east DOUBLE PRECISION NOT NULL,
+        model_north DOUBLE PRECISION NOT NULL,
+        model_up DOUBLE PRECISION,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (project_id, control_point_id)
+      )
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_gis_alignment_points_project ON gis_alignment_points(project_id)
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS gis_georeferencing (
         project_id INTEGER PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
         crs VARCHAR(40),
@@ -1507,6 +1522,390 @@ module.exports = function createGisModule({
     }
   }));
 
+  // ------------------------- survey alignment / fit ------------------------
+  const MIN_ALIGNMENT_PAIRS = 3;
+  const MAX_ALIGNMENT_PAIRS = 50;
+
+  function alignmentPairFromRow(row) {
+    const elevation = row.benchmark_elevation === null ? null : toNum(row.benchmark_elevation);
+    return {
+      id: row.id,
+      controlPointId: row.control_point_id,
+      pointName: row.name,
+      modelEast: toNum(row.model_east),
+      modelNorth: toNum(row.model_north),
+      modelUp: row.model_up === null ? null : toNum(row.model_up),
+      latitude: toNum(row.latitude),
+      longitude: toNum(row.longitude),
+      elevation,
+      verticalDatum: row.vertical_datum || null,
+      createdAt: row.created_at
+    };
+  }
+
+  async function loadAlignmentPairs(projectId) {
+    const result = await pool.query(
+      `SELECT a.*, c.name, c.latitude, c.longitude, c.benchmark_elevation, c.vertical_datum
+         FROM gis_alignment_points a
+         JOIN surveying_control_points c ON c.id = a.control_point_id
+        WHERE a.project_id = $1
+        ORDER BY a.id`,
+      [projectId]
+    );
+    return result.rows;
+  }
+
+  const round = (value, digits) => Number(Number(value).toFixed(digits));
+
+  // Least-squares 2D similarity: survey = t + scale * R(rotation) * model.
+  // Four parameters (a, b, tx, ty) are solved from at least three pairs; two pairs would fit
+  // exactly and report a meaningless zero residual, so they are refused.
+  function computeAlignmentFit(georef, pairRows) {
+    const definition = crsDefinition(georef && georef.crs);
+    if (!georef || !georef.crs) {
+      const error = new Error('Set and save the model CRS before fitting alignment pairs.');
+      error.status = 400;
+      throw error;
+    }
+    if (!definition) {
+      const error = new Error(`CRS ${georef.crs} is not supported. Choose one from GET /api/gis/crs.`);
+      error.status = 400;
+      throw error;
+    }
+    if (definition.units === 'degrees') {
+      const error = new Error('Alignment must use a projected CRS in metres. A geographic CRS would mix degrees with model units.');
+      error.status = 400;
+      throw error;
+    }
+    if (pairRows.length < MIN_ALIGNMENT_PAIRS) {
+      const error = new Error(`At least ${MIN_ALIGNMENT_PAIRS} alignment pairs are required; ${pairRows.length} recorded.`);
+      error.status = 400;
+      throw error;
+    }
+
+    const pairs = pairRows.map(row => {
+      if (row.latitude === null || row.longitude === null) {
+        const error = new Error(`Control point “${row.name}” has no latitude/longitude.`);
+        error.status = 400;
+        throw error;
+      }
+      const projected = transformPoint([toNum(row.longitude), toNum(row.latitude)], 'EPSG:4326', definition.code);
+      return {
+        ...alignmentPairFromRow(row),
+        surveyEast: projected[0],
+        surveyNorth: projected[1]
+      };
+    });
+
+    const count = pairs.length;
+    const meanModelEast = pairs.reduce((sum, pair) => sum + pair.modelEast, 0) / count;
+    const meanModelNorth = pairs.reduce((sum, pair) => sum + pair.modelNorth, 0) / count;
+    const meanSurveyEast = pairs.reduce((sum, pair) => sum + pair.surveyEast, 0) / count;
+    const meanSurveyNorth = pairs.reduce((sum, pair) => sum + pair.surveyNorth, 0) / count;
+
+    let denominator = 0;
+    let numeratorA = 0;
+    let numeratorB = 0;
+    pairs.forEach(pair => {
+      const mx = pair.modelEast - meanModelEast;
+      const my = pair.modelNorth - meanModelNorth;
+      const sx = pair.surveyEast - meanSurveyEast;
+      const sy = pair.surveyNorth - meanSurveyNorth;
+      denominator += mx * mx + my * my;
+      numeratorA += mx * sx + my * sy;
+      numeratorB += mx * sy - my * sx;
+    });
+
+    if (denominator < 1e-12) {
+      const error = new Error('The model coordinates are coincident; spread the pairs over the model so scale and rotation can be solved.');
+      error.status = 400;
+      throw error;
+    }
+
+    const a = numeratorA / denominator;
+    const b = numeratorB / denominator;
+    const scale = Math.hypot(a, b);
+    if (!Number.isFinite(scale) || scale < 1e-9) {
+      const error = new Error('The fitted scale is not usable. Check that model and survey coordinates are in the same units.');
+      error.status = 400;
+      throw error;
+    }
+    const rotationDeg = Math.atan2(b, a) * 180 / Math.PI;
+    const tx = meanSurveyEast - (a * meanModelEast - b * meanModelNorth);
+    const ty = meanSurveyNorth - (b * meanModelEast + a * meanModelNorth);
+
+    const residuals = pairs.map(pair => {
+      const predictedEast = tx + a * pair.modelEast - b * pair.modelNorth;
+      const predictedNorth = ty + b * pair.modelEast + a * pair.modelNorth;
+      const dx = predictedEast - pair.surveyEast;
+      const dy = predictedNorth - pair.surveyNorth;
+      return {
+        id: pair.id,
+        controlPointId: pair.controlPointId,
+        pointName: pair.pointName,
+        modelEast: pair.modelEast,
+        modelNorth: pair.modelNorth,
+        modelUp: pair.modelUp,
+        surveyEast: round(pair.surveyEast, 4),
+        surveyNorth: round(pair.surveyNorth, 4),
+        predictedEast: round(predictedEast, 4),
+        predictedNorth: round(predictedNorth, 4),
+        dx: round(dx, 4),
+        dy: round(dy, 4),
+        distance: round(Math.hypot(dx, dy), 4)
+      };
+    });
+
+    const rms = Math.sqrt(residuals.reduce((sum, item) => sum + item.distance * item.distance, 0) / count);
+    const maxResidual = Math.max(...residuals.map(item => item.distance));
+
+    const modelUps = pairs.map(pair => pair.modelUp).filter(value => value !== null);
+    const elevations = pairs.map(pair => pair.elevation).filter(value => value !== null);
+    const modelOriginUp = modelUps.length ? modelUps.reduce((sum, value) => sum + value, 0) / modelUps.length : null;
+    const anchorElevation = elevations.length ? elevations.reduce((sum, value) => sum + value, 0) / elevations.length : null;
+
+    const verticalPairs = pairs.filter(pair => pair.modelUp !== null && pair.elevation !== null);
+    let vertical = null;
+    let zOffset = null;
+    if (verticalPairs.length > 0) {
+      const zResiduals = verticalPairs.map(pair => {
+        const offset = pair.elevation - pair.modelUp;
+        return { pair, offset };
+      });
+      const meanOffset = zResiduals.reduce((sum, item) => sum + item.offset, 0) / zResiduals.length;
+      const verticalRms = Math.sqrt(zResiduals.reduce((sum, item) => sum + (item.offset - meanOffset) ** 2, 0) / zResiduals.length);
+      zOffset = meanOffset;
+      vertical = {
+        pairCount: verticalPairs.length,
+        offset: round(meanOffset, 4),
+        rms: round(verticalRms, 4),
+        residuals: zResiduals.map(item => ({
+          controlPointId: item.pair.controlPointId,
+          pointName: item.pair.pointName,
+          modelUp: item.pair.modelUp,
+          elevation: item.pair.elevation,
+          residual: round(item.offset - meanOffset, 4)
+        }))
+      };
+    }
+
+    const anchor = transformPoint([meanSurveyEast, meanSurveyNorth], definition.code, 'EPSG:4326');
+    const warnings = [];
+    if (count === MIN_ALIGNMENT_PAIRS) {
+      warnings.push('Three pairs exactly determine the four similarity parameters with little redundancy; add a fourth pair to check the fit.');
+    }
+    if (verticalPairs.length === 0) {
+      warnings.push('No pair has both a model height and a survey elevation; the height offset was not fitted.');
+    } else if (verticalPairs.length < count) {
+      warnings.push(`${count - verticalPairs.length} pair(s) lack a model height or elevation and were left out of the vertical fit.`);
+    }
+    const datums = [...new Set(pairs.map(pair => pair.verticalDatum).filter(Boolean))];
+    if (datums.length > 1) warnings.push(`Pairs record more than one vertical datum: ${datums.join(', ')}.`);
+    if (georef.vertical_datum && datums.some(datum => datum !== georef.vertical_datum)) {
+      warnings.push(`The saved vertical datum “${georef.vertical_datum}” differs from the control points' datum.`);
+    }
+    if (scale < 0.5 || scale > 2) {
+      warnings.push(`Fitted scale ${round(scale, 6)} is far from 1; check that model coordinates and the CRS use the same units.`);
+    }
+    if (maxResidual > 0.05) {
+      warnings.push(`Largest horizontal residual is ${round(maxResidual, 4)} m; inspect the pairs before applying the fit.`);
+    }
+
+    return {
+      ok: true,
+      crs: definition.code,
+      crsName: definition.name,
+      pairCount: count,
+      minimumPairs: MIN_ALIGNMENT_PAIRS,
+      modelOrigin: {
+        east: round(meanModelEast, 4),
+        north: round(meanModelNorth, 4),
+        up: modelOriginUp === null ? null : round(modelOriginUp, 4)
+      },
+      anchor: {
+        lat: round(anchor[1], 8),
+        lon: round(anchor[0], 8),
+        elevation: anchorElevation === null ? null : round(anchorElevation, 3)
+      },
+      rotationDeg: round(rotationDeg, 6),
+      scale: round(scale, 9),
+      zOffset: zOffset === null ? null : round(zOffset, 4),
+      rms: round(rms, 4),
+      maxResidual: round(maxResidual, 4),
+      meanResidual: round(residuals.reduce((sum, item) => sum + item.distance, 0) / count, 4),
+      residuals,
+      vertical,
+      warnings
+    };
+  }
+
+  // Builds a throw-away sample footprint from the extent of the saved alignment pairs and
+  // places it with the saved georeferencing record. Nothing here is stored or added to a layer.
+  function computeAlignmentPreview(georef, pairRows) {
+    if (!georef || !georef.crs) {
+      const error = new Error('Save the model CRS and georeferencing before previewing alignment.');
+      error.status = 400;
+      throw error;
+    }
+    const definition = crsDefinition(georef.crs);
+    if (!definition) {
+      const error = new Error(`CRS ${georef.crs} is not supported. Choose one from GET /api/gis/crs.`);
+      error.status = 400;
+      throw error;
+    }
+    if (definition.units === 'degrees') {
+      const error = new Error('Alignment preview needs a projected CRS in metres.');
+      error.status = 400;
+      throw error;
+    }
+    const anchorLat = georef.anchor_lat === null ? null : toNum(georef.anchor_lat);
+    const anchorLon = georef.anchor_lon === null ? null : toNum(georef.anchor_lon);
+    const originEast = georef.model_origin_east === null ? null : toNum(georef.model_origin_east);
+    const originNorth = georef.model_origin_north === null ? null : toNum(georef.model_origin_north);
+    const rotationDeg = georef.rotation_deg === null ? null : toNum(georef.rotation_deg);
+    const scale = georef.scale === null ? null : toNum(georef.scale);
+    if ([anchorLat, anchorLon, originEast, originNorth, rotationDeg, scale].some(value => value === null || !Number.isFinite(value))) {
+      const error = new Error('Save the anchor, model origin, rotation and scale before previewing alignment.');
+      error.status = 400;
+      throw error;
+    }
+    if (pairRows.length === 0) {
+      const error = new Error('Add at least one alignment pair so the sample footprint has an extent.');
+      error.status = 400;
+      throw error;
+    }
+
+    const anchorProjected = transformPoint([anchorLon, anchorLat], 'EPSG:4326', definition.code);
+    const radians = rotationDeg * Math.PI / 180;
+    const a = scale * Math.cos(radians);
+    const b = scale * Math.sin(radians);
+    const modelToSurvey = (east, north) => {
+      const dx = east - originEast;
+      const dy = north - originNorth;
+      return [anchorProjected[0] + a * dx - b * dy, anchorProjected[1] + b * dx + a * dy];
+    };
+    const surveyToLngLat = (east, north) => transformPoint([east, north], definition.code, 'EPSG:4326');
+
+    let minEast = Infinity; let maxEast = -Infinity; let minNorth = Infinity; let maxNorth = -Infinity;
+    const pairs = pairRows.map(row => {
+      const modelEast = toNum(row.model_east);
+      const modelNorth = toNum(row.model_north);
+      if (!Number.isFinite(modelEast) || !Number.isFinite(modelNorth)) {
+        const error = new Error(`Alignment pair “${row.name}” has no usable model coordinates.`);
+        error.status = 400;
+        throw error;
+      }
+      minEast = Math.min(minEast, modelEast); maxEast = Math.max(maxEast, modelEast);
+      minNorth = Math.min(minNorth, modelNorth); maxNorth = Math.max(maxNorth, modelNorth);
+      const survey = [toNum(row.longitude), toNum(row.latitude)];
+      if (!Number.isFinite(survey[0]) || !Number.isFinite(survey[1])) {
+        const error = new Error(`Control point “${row.name}” has no latitude/longitude.`);
+        error.status = 400;
+        throw error;
+      }
+      const surveyProjected = transformPoint(survey, 'EPSG:4326', definition.code);
+      const predicted = modelToSurvey(modelEast, modelNorth);
+      const predictedLngLat = surveyToLngLat(predicted[0], predicted[1]);
+      return {
+        id: row.id,
+        pointName: row.name,
+        modelEast: round(modelEast, 4),
+        modelNorth: round(modelNorth, 4),
+        surveyPoint: survey,
+        modelPoint: predictedLngLat,
+        residualMetres: round(Math.hypot(predicted[0] - surveyProjected[0], predicted[1] - surveyProjected[1]), 4)
+      };
+    });
+
+    const width = maxEast - minEast;
+    const height = maxNorth - minNorth;
+    if (width < 1e-6 || height < 1e-6) {
+      const error = new Error('The alignment pairs do not span an area; spread the model points before previewing.');
+      error.status = 400;
+      throw error;
+    }
+
+    const pad = Math.max(4, Math.max(width, height) * 0.08);
+    const west = minEast - pad; const east = maxEast + pad;
+    const south = minNorth - pad; const north = maxNorth + pad;
+    const centreEast = (minEast + maxEast) / 2;
+    const centreNorth = (minNorth + maxNorth) / 2;
+    const buildingWidth = Math.max(4, width * 0.34);
+    const buildingDepth = Math.max(4, height * 0.34);
+
+    const toLngLatRing = coordinates => coordinates.map(point => {
+      const projected = modelToSurvey(point[0], point[1]);
+      return surveyToLngLat(projected[0], projected[1]);
+    });
+    const siteRing = toLngLatRing([[west, south], [east, south], [east, north], [west, north], [west, south]]);
+    const buildingRing = toLngLatRing([
+      [centreEast - buildingWidth / 2, centreNorth - buildingDepth / 2],
+      [centreEast + buildingWidth / 2, centreNorth - buildingDepth / 2],
+      [centreEast + buildingWidth / 2, centreNorth + buildingDepth / 2],
+      [centreEast - buildingWidth / 2, centreNorth + buildingDepth / 2],
+      [centreEast - buildingWidth / 2, centreNorth - buildingDepth / 2]
+    ]);
+    const entrance = toLngLatRing([
+      [centreEast - Math.min(3, buildingWidth * 0.15), centreNorth - buildingDepth / 2],
+      [centreEast + Math.min(3, buildingWidth * 0.15), centreNorth - buildingDepth / 2]
+    ]);
+
+    const model = {
+      type: 'FeatureCollection',
+      features: [
+        { type: 'Feature', properties: { kind: 'site' }, geometry: { type: 'Polygon', coordinates: [siteRing] } },
+        { type: 'Feature', properties: { kind: 'building' }, geometry: { type: 'Polygon', coordinates: [buildingRing] } },
+        { type: 'Feature', properties: { kind: 'entrance' }, geometry: { type: 'LineString', coordinates: entrance } }
+      ]
+    };
+    const links = {
+      type: 'FeatureCollection',
+      features: pairs.map(pair => ({
+        type: 'Feature',
+        properties: { pointName: pair.pointName, residualMetres: pair.residualMetres },
+        geometry: { type: 'LineString', coordinates: [pair.modelPoint, pair.surveyPoint] }
+      }))
+    };
+    const points = {
+      type: 'FeatureCollection',
+      features: pairs.flatMap(pair => [
+        { type: 'Feature', properties: { role: 'model', pointName: pair.pointName }, geometry: { type: 'Point', coordinates: pair.modelPoint } },
+        { type: 'Feature', properties: { role: 'survey', pointName: pair.pointName }, geometry: { type: 'Point', coordinates: pair.surveyPoint } }
+      ])
+    };
+
+    const lngLats = [...siteRing, ...pairs.flatMap(pair => [pair.modelPoint, pair.surveyPoint])];
+    const bbox = [
+      Math.min(...lngLats.map(point => point[0])),
+      Math.min(...lngLats.map(point => point[1])),
+      Math.max(...lngLats.map(point => point[0])),
+      Math.max(...lngLats.map(point => point[1]))
+    ];
+
+    return {
+      ok: true,
+      crs: definition.code,
+      crsName: definition.name,
+      anchor: { lat: anchorLat, lon: anchorLon },
+      modelOrigin: { east: originEast, north: originNorth },
+      rotationDeg: round(rotationDeg, 6),
+      scale: round(scale, 9),
+      pairCount: pairs.length,
+      sample: {
+        note: 'Generated sample footprint, not an imported BIM model.',
+        groundWidthMetres: round(width * scale, 2),
+        groundDepthMetres: round(height * scale, 2)
+      },
+      maxResidual: round(Math.max(...pairs.map(pair => pair.residualMetres)), 4),
+      meanResidual: round(pairs.reduce((sum, pair) => sum + pair.residualMetres, 0) / pairs.length, 4),
+      model,
+      links,
+      points,
+      pairs,
+      bbox
+    };
+  }
+
   // ------------------------------ georeferencing ---------------------------
   app.get('/api/gis/georeferencing/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
     const result = await pool.query('SELECT * FROM gis_georeferencing WHERE project_id = $1', [req.projectId]);
@@ -1607,6 +2006,185 @@ module.exports = function createGisModule({
     res.json({ success: true, georeferencing: result.rows[0] });
   }));
 
+  // Alignment pairs map model coordinates to survey control points. Nothing is shifted by
+  // saving a pair; the fit is an explicit preview until apply-fit is called.
+  app.get('/api/gis/alignment/:projectId/points', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const rows = await loadAlignmentPairs(req.projectId);
+    res.json({
+      projectId: Number(req.projectId),
+      count: rows.length,
+      minimumPairs: MIN_ALIGNMENT_PAIRS,
+      maximumPairs: MAX_ALIGNMENT_PAIRS,
+      points: rows.map(alignmentPairFromRow)
+    });
+  }));
+
+  app.post('/api/gis/alignment/:projectId/points', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const pointId = Number(body.controlPointId);
+    const east = body.modelEast === '' || body.modelEast === null || body.modelEast === undefined ? NaN : Number(body.modelEast);
+    const north = body.modelNorth === '' || body.modelNorth === null || body.modelNorth === undefined ? NaN : Number(body.modelNorth);
+    const up = body.modelUp === '' || body.modelUp === null || body.modelUp === undefined ? null : Number(body.modelUp);
+
+    if (!Number.isInteger(pointId) || pointId <= 0) {
+      return res.status(400).json({ error: 'Choose a survey control point for this alignment pair.' });
+    }
+    if (!Number.isFinite(east) || !Number.isFinite(north) || Math.abs(east) > 1e9 || Math.abs(north) > 1e9) {
+      return res.status(400).json({ error: 'Model easting and northing must be finite numbers within ±1,000,000,000.' });
+    }
+    if (up !== null && !Number.isFinite(up)) {
+      return res.status(400).json({ error: 'Model height must be a number, or left blank.' });
+    }
+
+    const point = await pool.query(
+      'SELECT id, name FROM surveying_control_points WHERE id = $1 AND project_id = $2',
+      [pointId, req.projectId]
+    );
+    if (point.rows.length === 0) {
+      return res.status(404).json({ error: 'Survey control point not found in this project.' });
+    }
+
+    const existing = await pool.query('SELECT COUNT(*)::int AS count FROM gis_alignment_points WHERE project_id = $1', [req.projectId]);
+    if (existing.rows[0].count >= MAX_ALIGNMENT_PAIRS) {
+      return res.status(400).json({ error: `A project can have at most ${MAX_ALIGNMENT_PAIRS} alignment pairs.` });
+    }
+
+    try {
+      const result = await pool.query(
+        `INSERT INTO gis_alignment_points (project_id, control_point_id, model_east, model_north, model_up)
+         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+        [req.projectId, pointId, east, north, up]
+      );
+      const rows = await loadAlignmentPairs(req.projectId);
+      const created = rows.find(row => row.id === result.rows[0].id);
+      res.status(201).json({ success: true, point: created ? alignmentPairFromRow(created) : null });
+    } catch (err) {
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'That survey control point already has an alignment pair in this project.' });
+      }
+      throw err;
+    }
+  }));
+
+  app.put('/api/gis/alignment/:projectId/points/:pairId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const pairId = Number(req.params.pairId);
+    const east = body.modelEast === '' || body.modelEast === null || body.modelEast === undefined ? NaN : Number(body.modelEast);
+    const north = body.modelNorth === '' || body.modelNorth === null || body.modelNorth === undefined ? NaN : Number(body.modelNorth);
+    const up = body.modelUp === '' || body.modelUp === null || body.modelUp === undefined ? null : Number(body.modelUp);
+
+    if (!Number.isInteger(pairId) || pairId <= 0) {
+      return res.status(404).json({ error: 'Alignment pair not found.' });
+    }
+    if (!Number.isFinite(east) || !Number.isFinite(north) || Math.abs(east) > 1e9 || Math.abs(north) > 1e9) {
+      return res.status(400).json({ error: 'Model easting and northing must be finite numbers within ±1,000,000,000.' });
+    }
+    if (up !== null && !Number.isFinite(up)) {
+      return res.status(400).json({ error: 'Model height must be a number, or left blank.' });
+    }
+
+    const updated = await pool.query(
+      `UPDATE gis_alignment_points
+          SET model_east = $3, model_north = $4, model_up = $5
+        WHERE id = $1 AND project_id = $2
+        RETURNING id`,
+      [pairId, req.projectId, east, north, up]
+    );
+    if (updated.rows.length === 0) {
+      return res.status(404).json({ error: 'Alignment pair not found.' });
+    }
+
+    const rows = await loadAlignmentPairs(req.projectId);
+    const saved = rows.find(row => row.id === pairId);
+    res.json({ success: true, point: saved ? alignmentPairFromRow(saved) : null });
+  }));
+
+  app.delete('/api/gis/alignment/:projectId/points/:pairId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const result = await pool.query(
+      'DELETE FROM gis_alignment_points WHERE id = $1 AND project_id = $2 RETURNING id',
+      [req.params.pairId, req.projectId]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Alignment pair not found.' });
+    }
+    res.status(204).end();
+  }));
+
+  app.post('/api/gis/alignment/:projectId/fit', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const georefResult = await pool.query('SELECT * FROM gis_georeferencing WHERE project_id = $1', [req.projectId]);
+    if (georefResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Set and save the model CRS before fitting alignment pairs.' });
+    }
+    const rows = await loadAlignmentPairs(req.projectId);
+    let fit;
+    try {
+      fit = computeAlignmentFit(georefResult.rows[0], rows);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+    res.json(fit);
+  }));
+
+  // Apply recomputes the fit from the saved pairs, so the client cannot submit its own rotation
+  // or scale as if it had been verified.
+  app.post('/api/gis/georeferencing/:projectId/apply-fit', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const body = req.body || {};
+    const georefResult = await pool.query('SELECT * FROM gis_georeferencing WHERE project_id = $1', [req.projectId]);
+    if (georefResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Set and save the model CRS before applying an alignment fit.' });
+    }
+    const georef = georefResult.rows[0];
+    const rows = await loadAlignmentPairs(req.projectId);
+    let fit;
+    try {
+      fit = computeAlignmentFit(georef, rows);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+
+    const saved = await pool.query(
+      `UPDATE gis_georeferencing
+          SET anchor_lat = $2, anchor_lon = $3, anchor_elevation = $4,
+              model_origin_east = $5, model_origin_north = $6, model_origin_up = $7,
+              rotation_deg = $8, scale = $9, z_offset = $10,
+              vertical_datum = $11, notes = $12, verified_by = $13, updated_at = CURRENT_TIMESTAMP
+        WHERE project_id = $1
+        RETURNING *`,
+      [
+        req.projectId,
+        fit.anchor.lat, fit.anchor.lon, fit.anchor.elevation,
+        fit.modelOrigin.east, fit.modelOrigin.north, fit.modelOrigin.up,
+        fit.rotationDeg, fit.scale, fit.zOffset,
+        body.verticalDatum !== undefined
+          ? (body.verticalDatum ? String(body.verticalDatum).slice(0, 80) : null)
+          : georef.vertical_datum,
+        body.notes !== undefined
+          ? (body.notes ? String(body.notes).slice(0, 2000) : null)
+          : georef.notes,
+        body.verifiedBy !== undefined
+          ? (body.verifiedBy ? String(body.verifiedBy).slice(0, 160) : null)
+          : georef.verified_by
+      ]
+    );
+
+    res.json({ success: true, georeferencing: saved.rows[0], fit });
+  }));
+
+  app.get('/api/gis/alignment/:projectId/preview', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const georefResult = await pool.query('SELECT * FROM gis_georeferencing WHERE project_id = $1', [req.projectId]);
+    if (georefResult.rows.length === 0) {
+      return res.status(400).json({ error: 'Save georeferencing before previewing the sample model.' });
+    }
+    const rows = await loadAlignmentPairs(req.projectId);
+    let preview;
+    try {
+      preview = computeAlignmentPreview(georefResult.rows[0], rows);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+    res.json(preview);
+  }));
+
   // Alignment report: compares what is recorded and names every gap instead of assuming.
   app.get('/api/gis/alignment/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
     const projectId = req.projectId;
@@ -1647,32 +2225,15 @@ module.exports = function createGisModule({
       }
     }
 
-    // Model origin, if it is expressed in a CRS we can project.
+    // The anchor is the map position of the model origin, so the origin is placed by the
+    // anchor rather than by projecting local model coordinates as if they were CRS coordinates.
     let modelOriginOnMap = null;
     if (georef && georef.model_origin_east !== null && georef.model_origin_north !== null) {
-      if (georef.crs && crsKnown) {
-        try {
-          const definition = crsDefinition(georef.crs);
-          const transformed = definition.units === 'degrees'
-            ? [toNum(georef.model_origin_east), toNum(georef.model_origin_north)]
-            : transformPoint([toNum(georef.model_origin_east), toNum(georef.model_origin_north)], georef.crs, 'EPSG:4326');
-          modelOriginOnMap = { lat: transformed[1], lon: transformed[0] };
-
-          if (anchor) {
-            const distance = haversineMetres(anchor.lat, anchor.lon, modelOriginOnMap.lat, modelOriginOnMap.lon);
-            add(
-              distance > 25 ? 'warning' : 'ok',
-              `Model origin sits ${distance.toFixed(1)} m from the recorded anchor.`,
-              { distanceMetres: Number(distance.toFixed(2)) }
-            );
-          } else {
-            add('info', 'The model origin projects to a map position, but no anchor is recorded to compare it with.', modelOriginOnMap);
-          }
-        } catch (err) {
-          add('error', `The model origin could not be projected: ${err.message}`);
-        }
+      if (anchor) {
+        modelOriginOnMap = { lat: anchor.lat, lon: anchor.lon };
+        add('ok', 'Model origin is placed at the recorded anchor.', modelOriginOnMap);
       } else {
-        add('warning', 'The model origin is recorded but cannot be placed because the CRS is missing or unknown.', {
+        add('warning', 'The model origin is recorded but cannot be placed without an anchor.', {
           east: toNum(georef.model_origin_east),
           north: toNum(georef.model_origin_north)
         });

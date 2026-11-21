@@ -5,53 +5,56 @@ import proj4 from 'proj4';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import OsmExplorer from './OsmExplorer';
 import SurveyGis from './SurveyGis';
+import Georeferencing from './Georeferencing';
 import MapPrintLayout, { niceDistance, formatDistance } from './MapPrintLayout';
+import Icon from '../ui/Icon';
+import { DEFAULT_CENTER, SITE_ATTRIBUTION, addPlaceLabels, basemapStyle } from './basemap';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
-const DEFAULT_CENTER = [38.78, 9.02];
-const SITE_ATTRIBUTION = '© OpenStreetMap contributors';
 
 const styles = {
   page: { padding: '0 0 24px' },
   header: { display: 'flex', flexWrap: 'wrap', gap: '14px', alignItems: 'flex-end', marginBottom: '14px' },
-  card: { background: 'white', border: '1px solid #ddd', borderRadius: '8px', padding: '16px', boxShadow: '0 2px 4px rgba(0,0,0,0.06)' },
-  input: { padding: '9px 10px', border: '1px solid #ccc', borderRadius: '5px', fontSize: '14px', fontFamily: 'Calibri', minWidth: '140px' },
-  button: { padding: '9px 12px', background: '#FF6B35', color: 'white', border: 'none', borderRadius: '5px', cursor: 'pointer', fontWeight: 'bold', fontSize: '13px' },
-  buttonSmall: { padding: '5px 8px', background: 'white', border: '1px solid #ddd', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' },
-  helper: { color: '#5b6773', fontSize: '13px', lineHeight: 1.45, margin: '6px 0' },
-  error: { background: '#fff3f0', border: '1px solid #f3b7a6', color: '#8a2b12', padding: '10px 12px', borderRadius: '6px', fontSize: '13px', marginBottom: '10px' },
-  notice: { background: '#eef7ee', border: '1px solid #b7d9b7', color: '#235b2c', padding: '8px 12px', borderRadius: '6px', fontSize: '13px', marginBottom: '10px' },
-  grid: { display: 'grid', gridTemplateColumns: 'minmax(300px, 360px) minmax(0, 1fr)', gap: '14px', alignItems: 'start' },
-  map: { height: '660px', borderRadius: '10px', overflow: 'hidden', border: '1px solid #cfd8e3', background: '#eef2f7' },
-  layerRow: { borderTop: '1px solid #eee', padding: '8px 0' },
-  badge: { display: 'inline-block', fontSize: '10px', textTransform: 'uppercase', letterSpacing: '0.04em', background: '#eef2f7', color: '#425466', borderRadius: '3px', padding: '1px 5px', marginLeft: '6px' },
-  inspector: { position: 'absolute', left: '12px', bottom: '12px', maxWidth: '340px', background: 'rgba(255,255,255,0.97)', border: '1px solid #cfd8e3', borderRadius: '8px', padding: '10px 12px', fontSize: '12px', boxShadow: '0 4px 14px rgba(0,0,0,0.14)' }
+  card: { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: '12px', padding: '16px', boxShadow: 'var(--shadow-xs)' },
+  input: {
+    padding: '8px 10px',
+    border: '1px solid var(--line)',
+    borderRadius: '8px',
+    fontSize: '11px',
+    fontFamily: 'var(--font-sans)',
+    color: 'var(--ink)',
+    background: 'var(--surface)',
+    minWidth: '140px',
+    outline: 'none'
+  },
+  button: {
+    padding: '8px 11px',
+    background: 'var(--copper)',
+    color: '#fffaf3',
+    border: '1px solid var(--copper)',
+    borderRadius: '7px',
+    cursor: 'pointer',
+    fontWeight: 600,
+    fontSize: '10.5px'
+  },
+  buttonSmall: {
+    padding: '6px 9px',
+    background: 'var(--surface)',
+    border: '1px solid var(--line)',
+    borderRadius: '7px',
+    cursor: 'pointer',
+    fontSize: '10px',
+    color: 'var(--ink-2)'
+  },
+  helper: { color: 'var(--ink-3)', fontSize: '10px', lineHeight: 1.45, margin: '6px 0' },
+  error: { background: 'var(--danger-soft)', border: '1px solid #ecc9c4', color: 'var(--danger)', padding: '9px 11px', borderRadius: '8px', fontSize: '10.5px', marginBottom: '10px' },
+  notice: { background: 'var(--surface-2)', border: '1px solid var(--line)', color: 'var(--ink-2)', padding: '8px 11px', borderRadius: '8px', fontSize: '10.5px', marginBottom: '10px' },
+  grid: { display: 'grid', gridTemplateColumns: 'minmax(320px, 370px) minmax(0, 1fr)', gap: '12px', alignItems: 'start' },
+  map: { height: '660px', borderRadius: '0', overflow: 'hidden', border: '0', background: '#eef2f7' },
+  layerRow: { borderTop: '1px solid var(--line)', padding: '8px 0' },
+  badge: { display: 'inline-block', fontSize: '8px', textTransform: 'uppercase', letterSpacing: '0.05em', background: 'var(--surface-3)', color: 'var(--ink-3)', borderRadius: '4px', padding: '2px 5px', marginLeft: '6px' },
+  inspector: { position: 'absolute', left: '12px', bottom: '12px', maxWidth: '340px', background: 'rgba(255,253,249,0.97)', border: '1px solid var(--line-strong)', borderRadius: '9px', padding: '10px 12px', fontSize: '10px', boxShadow: 'var(--shadow-md)' }
 };
-
-const ROAD_COLOURS = {
-  motorway: '#f2b24a', trunk: '#f2b24a', primary: '#f8d28a', secondary: '#fbe4b6',
-  tertiary: '#ffffff', residential: '#ffffff', unclassified: '#ffffff', living_street: '#ffffff'
-};
-
-function roadClassWidths(motorway, primary, secondary, tertiary, other) {
-  return ['match', ['get', 'class'],
-    ['motorway', 'trunk'], motorway,
-    'primary', primary,
-    'secondary', secondary,
-    'tertiary', tertiary,
-    other];
-}
-
-// The style spec only allows `zoom` as the input of a top-level interpolate/step, so the width
-// expression stays a single interpolate whose stops are per-class matches.
-function roadWidth(extra = 0) {
-  const withExtra = value => (extra ? ['+', value, extra] : value);
-  return ['interpolate', ['linear'], ['zoom'],
-    10, withExtra(roadClassWidths(2.4, 2.2, 1.8, 1.4, 1.0)),
-    14, withExtra(roadClassWidths(9, 8, 6, 4, 2.8)),
-    18, withExtra(roadClassWidths(26, 22, 16, 10, 7))
-  ];
-}
 
 function labelFieldsFor(payload) {
   const fields = new Set();
@@ -77,85 +80,6 @@ function representativePoint(geometry) {
   }
   if (geometry.type === 'MultiPolygon') return representativePoint({ type: 'Polygon', coordinates: geometry.coordinates[0] || [] });
   return null;
-}
-
-function basemapStyle(basemap) {
-  const sources = {};
-  const layers = [{ id: 'background', type: 'background', paint: { 'background-color': '#f5f2ea' } }];
-
-  if (basemap && Array.isArray(basemap.features)) {
-    sources.basemap = { type: 'geojson', data: basemap, tolerance: 0.4 };
-
-    layers.push(
-      {
-        id: 'basemap-landuse', type: 'fill', source: 'basemap',
-        filter: ['==', ['geometry-type'], 'Polygon'],
-        paint: { 'fill-color': '#e9e4d6', 'fill-opacity': 0.7 }
-      },
-      {
-        id: 'basemap-water', type: 'fill', source: 'basemap',
-        filter: ['all', ['==', ['geometry-type'], 'Polygon'], ['==', ['get', 'kind'], 'water']],
-        paint: { 'fill-color': '#a9c9e6' }
-      },
-      {
-        id: 'basemap-waterway', type: 'line', source: 'basemap',
-        filter: ['==', ['get', 'kind'], 'waterway'],
-        paint: { 'line-color': '#8db8dc', 'line-width': 1.4 }
-      },
-      {
-        id: 'basemap-park', type: 'fill', source: 'basemap',
-        filter: ['all', ['==', ['geometry-type'], 'Polygon'], ['==', ['get', 'kind'], 'park']],
-        paint: { 'fill-color': '#cfe3c4', 'fill-opacity': 0.9 }
-      },
-      {
-        id: 'basemap-road-casing', type: 'line', source: 'basemap',
-        filter: ['==', ['get', 'kind'], 'road'],
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: { 'line-color': '#d8d1c3', 'line-width': roadWidth(1.8) }
-      },
-      {
-        id: 'basemap-road', type: 'line', source: 'basemap',
-        filter: ['==', ['get', 'kind'], 'road'],
-        layout: { 'line-cap': 'round', 'line-join': 'round' },
-        paint: {
-          'line-color': ['match', ['get', 'class'],
-            ['motorway', 'trunk'], ROAD_COLOURS.motorway,
-            'primary', ROAD_COLOURS.primary,
-            'secondary', ROAD_COLOURS.secondary,
-            '#ffffff'],
-          'line-width': roadWidth()
-        }
-      },
-      {
-        id: 'basemap-rail', type: 'line', source: 'basemap',
-        filter: ['==', ['get', 'kind'], 'rail'],
-        paint: { 'line-color': '#8d8d8d', 'line-width': 1.4, 'line-dasharray': [3, 2] }
-      }
-    );
-  }
-
-  return { version: 8, name: 'SiteTrackerPro local basemap', sources, layers };
-}
-
-function addPlaceLabels(map, basemap) {
-  if (!basemap || !Array.isArray(basemap.places)) return [];
-  const markers = [];
-  basemap.places
-    .filter(place => ['city', 'town', 'suburb', 'neighbourhood'].includes(place.place))
-    .slice(0, 70)
-    .forEach(place => {
-      const element = document.createElement('div');
-      element.textContent = place.name;
-      element.style.fontFamily = 'Calibri, sans-serif';
-      element.style.fontSize = place.place === 'city' ? '14px' : '11px';
-      element.style.fontWeight = place.place === 'city' ? 'bold' : 'normal';
-      element.style.color = '#3f4b58';
-      element.style.textShadow = '0 1px 2px #fff, 0 0 3px #fff';
-      element.style.pointerEvents = 'none';
-      element.style.whiteSpace = 'nowrap';
-      markers.push(new maplibregl.Marker({ element, anchor: 'center' }).setLngLat([place.lon, place.lat]).addTo(map));
-    });
-  return markers;
 }
 
 function geometryCenter(geometry) {
@@ -250,6 +174,8 @@ export default function GisWorkspace({ token, projects }) {
   const [annotationText, setAnnotationText] = useState('');
   const [annotationColour, setAnnotationColour] = useState('#b54708');
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 900);
+  const [mapQuery, setMapQuery] = useState('');
+  const [mapSearchOpen, setMapSearchOpen] = useState(false);
 
   useEffect(() => {
     const onResize = () => setNarrow(window.innerWidth < 900);
@@ -1172,10 +1098,64 @@ export default function GisWorkspace({ token, projects }) {
     ? { ...styles.grid, gridTemplateColumns: 'minmax(0, 1fr)' }
     : styles.grid;
   const readyTerrains = terrains.filter(item => item.status === 'ready');
-  const layers = workspace?.layers || [];
+  const layers = useMemo(() => workspace?.layers || [], [workspace]);
 
   const workingCrs = workspace?.workingCrs || 'EPSG:4326';
   const workingCrsDef = crsList.find(item => item.code === workingCrs);
+
+  const mapMatches = useMemo(() => {
+    const query = mapQuery.trim().toLowerCase();
+    if (query.length < 2) return [];
+    const matches = [];
+    Object.entries(payloads).forEach(([layerId, payload]) => {
+      const layer = layers.find(item => String(item.id) === String(layerId));
+      (payload?.geojson?.features || []).slice(0, 250).forEach((feature, index) => {
+        const properties = feature.properties || {};
+        const hit = Object.entries(properties).find(([, value]) => String(value ?? '').toLowerCase().includes(query));
+        if (!hit) return;
+        const center = geometryCenter(feature.geometry);
+        if (!center) return;
+        matches.push({
+          id: `${layerId}-${index}`,
+          label: String(hit[1]).slice(0, 64),
+          field: hit[0],
+          layer: layer?.name || 'Layer',
+          center,
+          feature
+        });
+      });
+    });
+    return matches.slice(0, 6);
+  }, [mapQuery, payloads, layers]);
+
+  const focusSearchResult = result => {
+    if (mapRef.current) {
+      mapRef.current.flyTo({ center: result.center, zoom: Math.max(mapRef.current.getZoom(), 17), duration: 900 });
+    }
+    setSelected({ geometryType: result.feature.geometry.type, properties: result.feature.properties });
+    setMapQuery(result.label);
+    setMapSearchOpen(false);
+  };
+
+  const locateMe = () => {
+    if (!navigator.geolocation || !mapRef.current) {
+      setError('This browser does not provide a location signal.');
+      return;
+    }
+    setNotice('Locating field position…');
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        mapRef.current.flyTo({
+          center: [position.coords.longitude, position.coords.latitude],
+          zoom: 17,
+          duration: 1000
+        });
+        setNotice(`Field position fixed · accuracy ±${Math.round(position.coords.accuracy)} m`);
+      },
+      error => setError(error.message || 'Could not read the field position.'),
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
   const cursorText = formatCursor(cursor, workingCrs, crsList);
   const tableLayer = layers.find(layer => String(layer.id) === String(tableLayerId));
   const tableDataset = tableLayer && tableLayer.kind === 'dataset'
@@ -1225,37 +1205,45 @@ export default function GisWorkspace({ token, projects }) {
   };
 
   return (
-    <div style={styles.page}>
-      <div style={styles.header}>
-        <div>
-          <h2 style={{ margin: '0 0 4px' }}>🗺️ GIS Workspace</h2>
-          <p style={{ ...styles.helper, margin: 0 }}>
-            An independent geospatial workspace: saved views, an ordered layer stack and project datasets.
-            Basemap is a local OpenStreetMap extract; contextual data is never a survey measurement.
+    <div className="page gis-shell">
+      <div className="page-head">
+        <div className="page-head-copy">
+          <div className="eyebrow">Spatial operations / workspace</div>
+          <h1 className="page-title">Map intelligence</h1>
+          <p className="page-sub">
+            A map-first record of layers, terrain, survey control and georeferencing. The local
+            OpenStreetMap basemap provides context; survey observations remain the measured record.
           </p>
         </div>
-        <div style={{ marginLeft: 'auto' }}>
-          <label style={{ ...styles.helper, display: 'block' }}>SiteTrackerPro project</label>
-          <select value={projectId} onChange={event => setProjectId(event.target.value)} style={styles.input}>
-            <option value="">-- Select Project --</option>
-            {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
+        <div className="page-actions">
+          <div className="gis-project">
+            <Icon name="building" size={13} />
+            <label htmlFor="gis-project-select">Project</label>
+            <select
+              id="gis-project-select"
+              value={projectId}
+              onChange={event => setProjectId(event.target.value)}
+            >
+              <option value="">Select project</option>
+              {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </div>
         </div>
       </div>
 
-      {error && <div style={styles.error}>⚠️ {error}</div>}
+      {error && <div style={styles.error} role="alert">{error}</div>}
       {notice && <div style={styles.notice}>{notice}</div>}
       {busy && <div style={styles.notice}>{busy}</div>}
       {basemapError && (
         <div style={styles.error}>
-          ⚠️ No local basemap extract at <code>/basemaps/addis-osm.json</code>. Run
+          No local basemap extract at <code>/basemaps/addis-osm.json</code>. Run
           {' '}<code>node scripts/build-basemap.js</code> (or the PBF variant) and restart the backend.
           Project layers still work on a plain background.
         </div>
       )}
 
-      <div style={gridStyle}>
-        <div>
+      <div className="gis-grid" style={gridStyle}>
+        <div className="gis-rail">
           <div style={styles.card}>
             <h3 style={{ marginTop: 0 }}>Workspaces</h3>
             {!projectId ? (
@@ -1313,21 +1301,15 @@ export default function GisWorkspace({ token, projects }) {
           </div>
 
           {projectId && (
-            <div style={{ display: 'flex', gap: '6px', marginTop: '12px', flexWrap: 'wrap' }} role="tablist" aria-label="GIS tools">
-              {[['workspace', 'Map workspace'], ['osm', 'OSM Explorer'], ['survey', 'Survey GIS']].map(([key, label]) => (
+            <div className="gis-tabs" role="tablist" aria-label="GIS tools">
+              {[['workspace', 'Map'], ['osm', 'OSM explorer'], ['survey', 'Survey GIS'], ['georef', 'Georeferencing']].map(([key, label]) => (
                 <button
                   key={key}
                   id={`gis-tab-${key}`}
+                  className="gis-tab"
                   role="tab"
                   aria-selected={view === key}
                   onClick={() => setView(key)}
-                  style={{
-                    padding: '6px 10px', borderRadius: '5px', cursor: 'pointer', fontSize: '12px',
-                    border: view === key ? '1px solid #d9480f' : '1px solid #dfe6ec',
-                    background: view === key ? '#fff4ec' : '#fff',
-                    color: view === key ? '#8a2b12' : '#26313c',
-                    fontWeight: view === key ? 600 : 400
-                  }}
                 >
                   {label}
                 </button>
@@ -1937,6 +1919,17 @@ export default function GisWorkspace({ token, projects }) {
             />
           )}
 
+          {view === 'georef' && (
+            <Georeferencing
+              projectId={projectId}
+              authHeaders={authHeaders}
+              crsList={crsList}
+              survey={survey}
+              onNotice={setNotice}
+              onError={setError}
+            />
+          )}
+
           {view === 'survey' && (
             <SurveyGis
               projectId={projectId}
@@ -1955,28 +1948,82 @@ export default function GisWorkspace({ token, projects }) {
           )}
         </div>
 
-        <div>
-          <div style={{ position: 'relative' }}>
-            <div ref={mapContainer} style={{ ...styles.map, height: narrow ? '480px' : '660px' }} />
-          {selected && (
-            <div style={styles.inspector}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}>
-                <strong>Feature</strong>
-                <button onClick={() => setSelected(null)} style={{ border: 'none', background: 'none', cursor: 'pointer' }}>×</button>
+        <div className="gis-map-column">
+          <div className="map-shell gis-map-shell">
+            <div className="map-top">
+              <div className="map-search">
+                <Icon name="search" size={14} />
+                <input
+                  value={mapQuery}
+                  onChange={event => { setMapQuery(event.target.value); setMapSearchOpen(true); }}
+                  onFocus={() => setMapSearchOpen(true)}
+                  onBlur={() => setTimeout(() => setMapSearchOpen(false), 120)}
+                  placeholder="Find a feature in this workspace…"
+                  aria-label="Search features on the map"
+                />
+                {mapQuery && (
+                  <button
+                    onClick={() => { setMapQuery(''); setMapSearchOpen(false); }}
+                    style={{ border: 0, background: 'none', padding: 0, color: 'inherit', display: 'grid', placeItems: 'center' }}
+                    aria-label="Clear map search"
+                  >
+                    <Icon name="x" size={12} />
+                  </button>
+                )}
+                {mapSearchOpen && mapQuery.trim().length >= 2 && (
+                  <div className="map-search-results">
+                    {mapMatches.length === 0 ? (
+                      <div style={{ padding: '8px', color: 'var(--ink-3)', fontSize: 10 }}>
+                        No feature in the loaded layers matches “{mapQuery.trim()}”.
+                      </div>
+                    ) : mapMatches.map(result => (
+                      <button
+                        key={result.id}
+                        className="map-search-result"
+                        onMouseDown={event => event.preventDefault()}
+                        onClick={() => focusSearchResult(result)}
+                      >
+                        {result.label}
+                        <span>{result.layer} · {result.field}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
-              <p style={{ ...styles.helper, margin: '4px 0' }}>{selected.geometryType}</p>
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <tbody>
-                  {Object.entries(selected.properties).filter(([, value]) => value !== null && value !== '').slice(0, 12).map(([key, value]) => (
-                    <tr key={key}>
-                      <td style={{ padding: '2px 4px', color: '#5b6773', verticalAlign: 'top' }}>{key}</td>
-                      <td style={{ padding: '2px 4px' }}>{String(value).slice(0, 120)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="map-badge secondary"><Icon name="layers" size={11} /> <strong>{layers.length}</strong> layers</div>
+              <div className="map-badge"><Icon name="compass" size={11} /> <strong>{workingCrs}</strong></div>
             </div>
-          )}
+
+            <div
+              ref={mapContainer}
+              style={{ ...styles.map, height: narrow ? '480px' : '660px', border: 0, borderRadius: 0 }}
+            />
+
+            <button className="icon-btn map-geolocate" onClick={locateMe} title="Locate field position" aria-label="Locate field position">
+              <Icon name="locate" size={16} />
+            </button>
+
+            {selected && (
+              <div className="map-inspector">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                  <strong style={{ fontSize: 11 }}>Feature record</strong>
+                  <button onClick={() => setSelected(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'var(--ink-3)', display: 'grid', placeItems: 'center' }} aria-label="Close feature record">
+                    <Icon name="x" size={13} />
+                  </button>
+                </div>
+                <div style={{ margin: '3px 0 7px', color: 'var(--ink-3)', fontSize: 9, textTransform: 'uppercase', letterSpacing: '.08em' }}>{selected.geometryType}</div>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    {Object.entries(selected.properties).filter(([, value]) => value !== null && value !== '').slice(0, 12).map(([key, value]) => (
+                      <tr key={key}>
+                        <td style={{ padding: '3px 4px', color: 'var(--ink-3)', verticalAlign: 'top', borderBottom: '1px solid var(--line)' }}>{key}</td>
+                        <td style={{ padding: '3px 4px', borderBottom: '1px solid var(--line)' }}>{String(value).slice(0, 120)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
 
           {tableLayer && (

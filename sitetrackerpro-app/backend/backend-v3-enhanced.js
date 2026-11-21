@@ -9,6 +9,8 @@ const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
+const { calculateEarthworksVolumes } = require('./earthworks');
+const { CONTROL_POINT_STATUSES, normaliseStatus, validateControlPointRows } = require('./control-points');
 require('dotenv').config();
 
 // Initialize Express
@@ -24,6 +26,9 @@ app.use(helmet({
     directives: {
       // The frontend, its assets and the API are all on this one origin. MapLibre's image source
       // fetches the authenticated hillshade after we turn it into a data:/blob: URL.
+      // web-ifc instantiates its WebAssembly geometry engine in the browser. This
+      // permits WASM compilation only; it does not enable eval() for JavaScript.
+      scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
       connectSrc: ["'self'", 'data:', 'blob:'],
       // MapLibre creates its workers from blob: URLs.
       workerSrc: ["'self'", "blob:"],
@@ -848,13 +853,145 @@ app.get('/api/bim/:projectId', verifyToken, requireProjectAccess(req => req.para
 // Save surveying control points
 app.post('/api/surveying/control-points', verifyToken, requireProjectAccess(req => req.body.projectId), async (req, res) => {
   try {
-    const { projectId, latitude, longitude, benchmarkElevation, groundLevel, floorLevel, foundationDepth, buildingFootprint } = req.body;
-    
+    const { projectId, name, latitude, longitude, benchmarkElevation, groundLevel, floorLevel, foundationDepth, buildingFootprint, isBenchmark, verticalDatum, status } = req.body;
+
+    const cleanName = typeof name === 'string' ? name.trim().slice(0, 120) : null;
+    const cleanStatus = normaliseStatus(status, 'submitted');
+    if (!cleanStatus) {
+      return res.status(400).json({ error: `Unknown status. Use one of: ${CONTROL_POINT_STATUSES.join(', ')}.` });
+    }
+
     const result = await pool.query(
-      'INSERT INTO surveying_control_points (project_id, latitude, longitude, benchmark_elevation, ground_level, floor_level, foundation_depth, building_footprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [projectId, latitude, longitude, benchmarkElevation, groundLevel, floorLevel, foundationDepth, buildingFootprint]
+      `INSERT INTO surveying_control_points
+         (project_id, name, latitude, longitude, benchmark_elevation, ground_level, floor_level, foundation_depth, building_footprint, is_benchmark, vertical_datum, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+      [
+        projectId,
+        cleanName || null,
+        latitude,
+        longitude,
+        benchmarkElevation,
+        groundLevel,
+        floorLevel,
+        foundationDepth,
+        buildingFootprint,
+        isBenchmark === true,
+        typeof verticalDatum === 'string' ? verticalDatum.trim().slice(0, 80) || null : null,
+        cleanStatus
+      ]
     );
-    
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    serverError(res, req.method + ' ' + req.path, err);
+  }
+});
+
+// Full project control-point register. The legacy single-point GET stays in place
+// for existing callers; this endpoint returns every point so the field screen can
+// show what has actually been recorded instead of being write-only.
+app.get('/api/surveying/:projectId/control-points', verifyToken, requireProjectAccess(req => req.params.projectId), async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM surveying_control_points WHERE project_id = $1 ORDER BY created_at DESC, id DESC',
+      [req.params.projectId]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    serverError(res, req.method + ' ' + req.path, err);
+  }
+});
+
+// Bulk registration of a control network. Validation happens again here even
+// though the browser previews the file; the client is never trusted with ranges,
+// duplicate detection or status values.
+app.post('/api/surveying/control-points/import', verifyToken, requireProjectAccess(req => req.body.projectId), async (req, res) => {
+  try {
+    const projectId = req.projectId;
+    const rows = Array.isArray(req.body.points) ? req.body.points : null;
+
+    if (!rows || rows.length === 0) {
+      return res.status(400).json({ error: 'The import contains no control points.' });
+    }
+    if (rows.length > 1000) {
+      return res.status(400).json({ error: 'Import at most 1,000 control points at a time.' });
+    }
+
+    const existing = await pool.query(
+      'SELECT name FROM surveying_control_points WHERE project_id = $1 AND name IS NOT NULL',
+      [projectId]
+    );
+
+    const validation = validateControlPointRows(rows, {
+      defaultVerticalDatum: req.body.defaultVerticalDatum,
+      defaultStatus: req.body.defaultStatus,
+      existingNames: existing.rows.map(row => row.name)
+    });
+
+    if (validation.points.length === 0) {
+      return res.json({
+        imported: 0,
+        skipped: rows.length,
+        rowsRead: rows.length,
+        errors: validation.errors,
+        points: []
+      });
+    }
+
+    const placeholders = [];
+    const params = [];
+    validation.points.forEach((point, index) => {
+      const base = index * 8;
+      placeholders.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`);
+      params.push(
+        projectId,
+        point.name,
+        point.latitude,
+        point.longitude,
+        point.benchmarkElevation,
+        point.isBenchmark,
+        point.verticalDatum,
+        point.status
+      );
+    });
+
+    const inserted = await pool.query(
+      `INSERT INTO surveying_control_points
+         (project_id, name, latitude, longitude, benchmark_elevation, is_benchmark, vertical_datum, status)
+       VALUES ${placeholders.join(', ')} RETURNING *`,
+      params
+    );
+
+    res.json({
+      imported: inserted.rows.length,
+      skipped: validation.errors.length,
+      rowsRead: rows.length,
+      errors: validation.errors,
+      points: inserted.rows
+    });
+  } catch (err) {
+    serverError(res, req.method + ' ' + req.path, err);
+  }
+});
+
+// Change the lifecycle status of one control point. The project id is required in
+// the body so the same ownership middleware protects this route.
+app.patch('/api/surveying/control-points/:id', verifyToken, requireProjectAccess(req => req.body.projectId), async (req, res) => {
+  try {
+    const status = normaliseStatus(req.body.status, null);
+    if (!status) {
+      return res.status(400).json({ error: `Unknown status. Use one of: ${CONTROL_POINT_STATUSES.join(', ')}.` });
+    }
+
+    const result = await pool.query(
+      `UPDATE surveying_control_points
+          SET status = $1, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $2 AND project_id = $3
+        RETURNING *`,
+      [status, req.params.id, req.projectId]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Control point not found.' });
     res.json(result.rows[0]);
   } catch (err) {
     serverError(res, req.method + ' ' + req.path, err);
@@ -896,19 +1033,23 @@ app.post('/api/earthworks/calculate', verifyToken, requireProjectAccess(req => r
       return res.status(400).json({ error: `Missing, non-numeric or not positive: ${missing.join(', ')}` });
     }
 
-    // Calculate volumes
-    const cutVolume = buildingFootprint * foundationDepth;
-    const netVolume = fillNeeded * buildingFootprint;
-    
+    // Calculate volumes. A floor below existing ground adds cut; it must never
+    // produce a negative fill volume.
+    const volumes = calculateEarthworksVolumes({
+      buildingFootprint,
+      foundationDepth,
+      fillDepth: fillNeeded
+    });
+
     const result = await pool.query(
       'INSERT INTO earthworks_calculations (project_id, cut_volume, fill_volume, net_volume) VALUES ($1, $2, $3, $4) RETURNING *',
-      [projectId, cutVolume, netVolume, netVolume - cutVolume]
+      [projectId, volumes.cutVolume, volumes.fillVolume, volumes.netVolume]
     );
-    
+
     res.json({
-      cutVolume,
-      fillVolume: netVolume,
-      netImport: netVolume - cutVolume,
+      cutVolume: volumes.cutVolume,
+      fillVolume: volumes.fillVolume,
+      netImport: volumes.netVolume,
       calculation: result.rows[0]
     });
   } catch (err) {
@@ -1674,6 +1815,22 @@ async function ensureSchema() {
     )
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_rates_project_id ON project_material_rates(project_id)');
+
+  // Existing installations predate named control points, vertical datums and
+  // lifecycle statuses. Adding the columns here keeps upgrades safe without a
+  // separate migration runner; the table itself is created by schema.sql on a
+  // fresh database, so these are no-ops there.
+  await pool.query('ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS name VARCHAR(120)');
+  await pool.query('ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS is_benchmark BOOLEAN DEFAULT FALSE');
+  await pool.query('ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS vertical_datum VARCHAR(80)');
+  await pool.query("ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'submitted'");
+  await pool.query('ALTER TABLE IF EXISTS surveying_control_points ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+
+  // Old records have no name, which would leave blank rows in the register and
+  // make them impossible to identify during a survey. Give each one a stable,
+  // clearly-marked name once; re-running the upgrade does not overwrite names
+  // that a surveyor has since edited.
+  await pool.query("UPDATE surveying_control_points SET name = 'Legacy control point ' || id WHERE name IS NULL");
 }
 
 app.listen(PORT, () => {

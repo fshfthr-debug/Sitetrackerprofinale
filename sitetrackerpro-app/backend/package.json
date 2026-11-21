@@ -5,7 +5,8 @@
   "main": "backend-v3-enhanced.js",
   "scripts": {
     "start": "node backend-v3-enhanced.js",
-    "dev": "nodemon backend-v3-enhanced.js"
+    "dev": "nodemon backend-v3-enhanced.js",
+    "test": "node --test test/*.test.js"
   },
   "keywords": [
     "construction",
