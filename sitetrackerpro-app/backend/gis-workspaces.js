@@ -122,6 +122,8 @@ module.exports = function createGisWorkspaceModule({
       style.color = colour;
     }
     if (value.lineWidth !== undefined) style.lineWidth = Math.min(20, Math.max(0.5, toNum(value.lineWidth, 1)));
+    if (value.fillOpacity !== undefined) style.fillOpacity = Math.min(1, Math.max(0, toNum(value.fillOpacity, 0.28)));
+    if (value.pointSize !== undefined) style.pointSize = Math.min(30, Math.max(2, toNum(value.pointSize, 5)));
     return style;
   }
 

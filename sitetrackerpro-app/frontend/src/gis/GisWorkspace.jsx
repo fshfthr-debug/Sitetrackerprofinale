@@ -5,6 +5,7 @@ import proj4 from 'proj4';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import OsmExplorer from './OsmExplorer';
 import SurveyGis from './SurveyGis';
+import MapPrintLayout, { niceDistance, formatDistance } from './MapPrintLayout';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 const DEFAULT_CENTER = [38.78, 9.02];
@@ -212,6 +213,12 @@ export default function GisWorkspace({ token, projects }) {
   const [tableLayerId, setTableLayerId] = useState('');
   const [tableFilter, setTableFilter] = useState('');
   const [tableSort, setTableSort] = useState({ key: null, direction: 'asc' });
+  const [styleLayerId, setStyleLayerId] = useState('');
+  const [printSnapshot, setPrintSnapshot] = useState(null);
+  const [printSettings, setPrintSettings] = useState({
+    title: '', subtitle: '', paper: 'A4', orientation: 'landscape',
+    legend: true, scaleBar: true, northArrow: true, attribution: true
+  });
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 900);
 
   useEffect(() => {
@@ -225,6 +232,8 @@ export default function GisWorkspace({ token, projects }) {
   const fittedRef = useRef(null);
   const markersRef = useRef([]);
   const opacityTimers = useRef({});
+  const styleTimers = useRef({});
+  const styleDraftRef = useRef({});
   const fileInputRef = useRef(null);
 
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -242,7 +251,10 @@ export default function GisWorkspace({ token, projects }) {
       style: basemapStyle(null),
       center: DEFAULT_CENTER,
       zoom: 11,
-      attributionControl: false
+      attributionControl: false,
+      // MapLibre 5 reads this from canvasContextAttributes; it lets the print layout capture
+      // the rendered map canvas as a PNG.
+      canvasContextAttributes: { preserveDrawingBuffer: true }
     });
     mapRef.current = map;
     if (typeof window !== 'undefined') window.__gisMap = map;
@@ -461,6 +473,9 @@ export default function GisWorkspace({ token, projects }) {
       const sourceId = `gislayer-${layer.id}`;
       const visibility = layer.visible ? 'visible' : 'none';
       const colour = (layer.style && layer.style.color) || (layer.kind === 'survey' ? '#0b7285' : '#d9480f');
+      const fillOpacity = Number.isFinite(Number(layer.style?.fillOpacity)) ? Number(layer.style.fillOpacity) : 0.28;
+      const lineWidth = Number.isFinite(Number(layer.style?.lineWidth)) ? Number(layer.style.lineWidth) : 2;
+      const pointSize = Number.isFinite(Number(layer.style?.pointSize)) ? Number(layer.style.pointSize) : 5;
 
       if (payload.geojson) {
         map.addSource(sourceId, { type: 'geojson', data: payload.geojson });
@@ -472,23 +487,23 @@ export default function GisWorkspace({ token, projects }) {
         map.addLayer({
           id: `${sourceId}-fill`, type: 'fill', source: sourceId, filter: geometryFilters.polygon,
           layout: { visibility },
-          paint: { 'fill-color': colour, 'fill-opacity': 0.28 * layer.opacity }
+          paint: { 'fill-color': colour, 'fill-opacity': fillOpacity * layer.opacity }
         });
         map.addLayer({
           id: `${sourceId}-line`, type: 'line', source: sourceId, filter: geometryFilters.line,
           layout: { visibility, 'line-cap': 'round', 'line-join': 'round' },
-          paint: { 'line-color': colour, 'line-width': layer.style?.lineWidth || 2, 'line-opacity': layer.opacity }
+          paint: { 'line-color': colour, 'line-width': lineWidth, 'line-opacity': layer.opacity }
         });
         map.addLayer({
           id: `${sourceId}-circle`, type: 'circle', source: sourceId, filter: geometryFilters.point,
           layout: { visibility },
           paint: {
             'circle-color': layer.kind === 'survey'
-              ? ['case', ['==', ['get', 'isBenchmark'], true], '#c92a2a', '#0b7285']
+              ? ['case', ['==', ['get', 'isBenchmark'], true], '#c92a2a', colour]
               : colour,
             'circle-radius': layer.kind === 'survey'
-              ? ['case', ['==', ['get', 'isBenchmark'], true], 7, 5]
-              : 5,
+              ? ['case', ['==', ['get', 'isBenchmark'], true], pointSize + 2, pointSize]
+              : pointSize,
             'circle-stroke-color': '#ffffff',
             'circle-stroke-width': layer.kind === 'survey'
               ? ['case', ['==', ['get', 'isBenchmark'], true], 2, 1.5]
@@ -652,6 +667,59 @@ export default function GisWorkspace({ token, projects }) {
     }
   };
 
+  const openPrintLayout = async () => {
+    const map = mapRef.current;
+    if (!map || !workspace) {
+      setError('Choose a workspace before opening the print layout.');
+      return;
+    }
+    setError('');
+    try {
+      map.triggerRepaint();
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const canvas = map.getCanvas();
+      const image = canvas.toDataURL('image/png');
+      if (!image || image.length < 1000) throw new Error('The map image could not be captured.');
+      const centre = map.getCenter();
+      const metresPerPixel = 156543.03392 * Math.cos(centre.lat * Math.PI / 180) / Math.pow(2, map.getZoom());
+      const widthMetres = metresPerPixel * canvas.width;
+      const distance = niceDistance(widthMetres * 0.24);
+      const legend = [...workspace.layers]
+        .filter(item => item.visible)
+        .sort((a, b) => b.zIndex - a.zIndex)
+        .flatMap(item => {
+          if (item.kind === 'survey') {
+            return [
+              { label: `${item.name} — benchmark`, color: '#c92a2a', round: true },
+              { label: `${item.name} — control`, color: item.style?.color || '#0b7285', round: true }
+            ];
+          }
+          if (item.kind === 'terrain') return [{ label: item.name, gradient: true }];
+          return [{ label: item.name, color: item.style?.color || '#d9480f' }];
+        })
+        .filter((item, index, all) => all.findIndex(other =>
+          other.label === item.label && other.color === item.color && other.gradient === item.gradient
+        ) === index);
+      setPrintSnapshot({
+        image,
+        width: canvas.width,
+        height: canvas.height,
+        bearing: map.getBearing(),
+        workspaceName: workspace.name,
+        crs: workspace.workingCrs,
+        scale: { label: formatDistance(distance), percent: (distance / widthMetres) * 100 },
+        legend
+      });
+      setPrintSettings(current => ({
+        ...current,
+        title: workspace.name,
+        subtitle: `${project ? `${project.name} · ` : ''}${workspace.workingCrs}`
+      }));
+    } catch (err) {
+      setError(`Could not prepare the print layout: ${err.message}`);
+    }
+  };
+
   const addLayer = async (body) => {
     if (!workspaceId) return;
     setBusy('Adding layer…');
@@ -680,6 +748,34 @@ export default function GisWorkspace({ token, projects }) {
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     }
+  };
+
+  const setLayerStyle = (layer, patch) => {
+    const base = styleDraftRef.current[layer.id] || layer.style || {};
+    const style = { ...base, ...patch };
+    styleDraftRef.current[layer.id] = style;
+    setWorkspace(current => current && ({
+      ...current,
+      layers: current.layers.map(item => item.id === layer.id ? { ...item, style } : item)
+    }));
+    clearTimeout(styleTimers.current[layer.id]);
+    styleTimers.current[layer.id] = setTimeout(() => {
+      axios.put(`${API_URL}/api/gis/workspaces/${projectId}/${workspaceId}/layers/${layer.id}`, { style }, { headers: authHeaders })
+        .then(() => { delete styleDraftRef.current[layer.id]; })
+        .catch(err => setError(err.response?.data?.error || err.message));
+    }, 350);
+  };
+
+  const resetLayerStyle = layer => {
+    styleDraftRef.current[layer.id] = {};
+    setWorkspace(current => current && ({
+      ...current,
+      layers: current.layers.map(item => item.id === layer.id ? { ...item, style: {} } : item)
+    }));
+    clearTimeout(styleTimers.current[layer.id]);
+    axios.put(`${API_URL}/api/gis/workspaces/${projectId}/${workspaceId}/layers/${layer.id}`, { style: {} }, { headers: authHeaders })
+      .then(() => { delete styleDraftRef.current[layer.id]; })
+      .catch(err => setError(err.response?.data?.error || err.message));
   };
 
   const setLayerOpacity = (layer, opacity) => {
@@ -993,6 +1089,7 @@ export default function GisWorkspace({ token, projects }) {
                       <button onClick={saveView} disabled={savingView} style={styles.button}>
                         {savingView ? 'Saving…' : 'Save view'}
                       </button>
+                      <button id="gis-print-open" onClick={openPrintLayout} style={styles.buttonSmall}>Print layout</button>
                       <button onClick={deleteWorkspace} style={styles.buttonSmall}>Delete workspace</button>
                     </div>
                   </div>
@@ -1153,8 +1250,75 @@ export default function GisWorkspace({ token, projects }) {
                         title="Layer opacity"
                       />
                       <button onClick={() => zoomToLayer(layer)} style={styles.buttonSmall}>Zoom</button>
+                      {layer.kind !== 'terrain' && (
+                        <button
+                          id={`layer-style-toggle-${layer.id}`}
+                          onClick={() => setStyleLayerId(styleLayerId === String(layer.id) ? '' : String(layer.id))}
+                          style={{ ...styles.buttonSmall, background: styleLayerId === String(layer.id) ? '#fff4ec' : 'white' }}
+                        >
+                          Style
+                        </button>
+                      )}
                       <button onClick={() => removeLayer(layer)} style={styles.buttonSmall}>×</button>
                     </div>
+                    {styleLayerId === String(layer.id) && layer.kind !== 'terrain' && (
+                      <div
+                        id={`layer-style-panel-${layer.id}`}
+                        style={{ background: '#f7f9fb', border: '1px solid #e3e9ef', borderRadius: '6px', padding: '8px', marginTop: '6px' }}
+                      >
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 10px' }}>
+                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                            Colour
+                            <div style={{ display: 'flex', gap: '5px', alignItems: 'center', marginTop: '3px' }}>
+                              <input
+                                id={`layer-color-${layer.id}`}
+                                type="color"
+                                value={/^#[0-9a-f]{6}$/i.test(layer.style?.color || '') ? layer.style.color : (layer.kind === 'survey' ? '#0b7285' : '#d9480f')}
+                                onChange={event => setLayerStyle(layer, { color: event.target.value })}
+                                style={{ width: '42px', height: '26px', padding: 0, border: '1px solid #ccd6df', borderRadius: '3px' }}
+                              />
+                              <code style={{ fontSize: '10px' }}>{layer.style?.color || 'default'}</code>
+                            </div>
+                          </label>
+                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                            Line width · {Number(layer.style?.lineWidth ?? 2)}px
+                            <input
+                              id={`layer-linewidth-${layer.id}`}
+                              type="range" min="0.5" max="10" step="0.5"
+                              value={Number(layer.style?.lineWidth ?? 2)}
+                              onChange={event => setLayerStyle(layer, { lineWidth: Number(event.target.value) })}
+                              style={{ display: 'block', width: '100%' }}
+                            />
+                          </label>
+                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                            Fill opacity · {Math.round(Number(layer.style?.fillOpacity ?? 0.28) * 100)}%
+                            <input
+                              id={`layer-fill-${layer.id}`}
+                              type="range" min="0" max="1" step="0.05"
+                              value={Number(layer.style?.fillOpacity ?? 0.28)}
+                              onChange={event => setLayerStyle(layer, { fillOpacity: Number(event.target.value) })}
+                              style={{ display: 'block', width: '100%' }}
+                            />
+                          </label>
+                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                            Point size · {Number(layer.style?.pointSize ?? 5)}px
+                            <input
+                              id={`layer-pointsize-${layer.id}`}
+                              type="range" min="2" max="20" step="1"
+                              value={Number(layer.style?.pointSize ?? 5)}
+                              onChange={event => setLayerStyle(layer, { pointSize: Number(event.target.value) })}
+                              style={{ display: 'block', width: '100%' }}
+                            />
+                          </label>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
+                          <span style={{ fontSize: '10px', color: '#5b6773' }}>
+                            {layer.kind === 'survey' ? 'Benchmarks stay red; colour applies to control points.' : 'Saved to the layer style.'}
+                          </span>
+                          <button id={`layer-reset-${layer.id}`} onClick={() => resetLayerStyle(layer)} style={styles.buttonSmall}>Reset</button>
+                        </div>
+                      </div>
+                    )}
                     {(layer.kind === 'dataset' || layer.kind === 'survey') && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '5px', flexWrap: 'wrap' }}>
                         <button onClick={() => openTable(layer)} style={styles.buttonSmall}>Attribute table</button>
@@ -1565,6 +1729,16 @@ export default function GisWorkspace({ token, projects }) {
           )}
         </div>
       </div>
+
+      {printSnapshot && (
+        <MapPrintLayout
+          snapshot={printSnapshot}
+          settings={printSettings}
+          setSettings={setPrintSettings}
+          onClose={() => setPrintSnapshot(null)}
+          project={project}
+        />
+      )}
     </div>
   );
 }
