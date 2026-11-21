@@ -329,6 +329,19 @@ CREATE TABLE IF NOT EXISTS gis_layers (
 CREATE INDEX IF NOT EXISTS idx_gis_projects_project ON gis_projects(project_id);
 CREATE INDEX IF NOT EXISTS idx_gis_layers_workspace ON gis_layers(gis_project_id, z_index);
 
+CREATE TABLE IF NOT EXISTS gis_annotations (
+  id SERIAL PRIMARY KEY,
+  gis_project_id INTEGER NOT NULL REFERENCES gis_projects(id) ON DELETE CASCADE,
+  text VARCHAR(240) NOT NULL,
+  longitude DOUBLE PRECISION NOT NULL,
+  latitude DOUBLE PRECISION NOT NULL,
+  color VARCHAR(16) NOT NULL DEFAULT '#b54708',
+  created_by INTEGER,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_gis_annotations_workspace ON gis_annotations(gis_project_id);
+
 CREATE INDEX IF NOT EXISTS idx_gis_cache_expiry ON gis_osm_cache(expires_at);
 
 -- ==================== DEM / TERRAIN SURVEYS ====================

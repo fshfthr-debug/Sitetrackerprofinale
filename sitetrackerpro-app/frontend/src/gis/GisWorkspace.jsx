@@ -53,6 +53,32 @@ function roadWidth(extra = 0) {
   ];
 }
 
+function labelFieldsFor(payload) {
+  const fields = new Set();
+  (payload?.geojson?.features || []).slice(0, 100).forEach(feature => {
+    Object.keys(feature.properties || {}).forEach(key => fields.add(key));
+  });
+  return [...fields].slice(0, 40);
+}
+
+// A label needs one stable point per feature. Points use themselves, lines their middle vertex and
+// polygons the average of their outer ring (close enough for a map label, never written back).
+function representativePoint(geometry) {
+  if (!geometry || !geometry.type) return null;
+  if (geometry.type === 'Point') return geometry.coordinates;
+  if (geometry.type === 'MultiPoint') return geometry.coordinates[0] || null;
+  if (geometry.type === 'LineString') return geometry.coordinates[Math.floor(geometry.coordinates.length / 2)] || null;
+  if (geometry.type === 'MultiLineString') return representativePoint({ type: 'LineString', coordinates: geometry.coordinates[0] || [] });
+  if (geometry.type === 'Polygon') {
+    const ring = (geometry.coordinates[0] || []).slice(0, -1);
+    if (ring.length === 0) return null;
+    const sum = ring.reduce((acc, point) => [acc[0] + point[0], acc[1] + point[1]], [0, 0]);
+    return [sum[0] / ring.length, sum[1] / ring.length];
+  }
+  if (geometry.type === 'MultiPolygon') return representativePoint({ type: 'Polygon', coordinates: geometry.coordinates[0] || [] });
+  return null;
+}
+
 function basemapStyle(basemap) {
   const sources = {};
   const layers = [{ id: 'background', type: 'background', paint: { 'background-color': '#f5f2ea' } }];
@@ -219,6 +245,10 @@ export default function GisWorkspace({ token, projects }) {
     title: '', subtitle: '', paper: 'A4', orientation: 'landscape',
     legend: true, scaleBar: true, northArrow: true, attribution: true
   });
+  const [annotations, setAnnotations] = useState([]);
+  const [annotationMode, setAnnotationMode] = useState(false);
+  const [annotationText, setAnnotationText] = useState('');
+  const [annotationColour, setAnnotationColour] = useState('#b54708');
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 900);
 
   useEffect(() => {
@@ -234,6 +264,10 @@ export default function GisWorkspace({ token, projects }) {
   const opacityTimers = useRef({});
   const styleTimers = useRef({});
   const styleDraftRef = useRef({});
+  const annotationMarkersRef = useRef([]);
+  const featureLabelMarkersRef = useRef([]);
+  const annotationModeRef = useRef(false);
+  const createAnnotationRef = useRef(null);
   const fileInputRef = useRef(null);
 
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
@@ -269,6 +303,7 @@ export default function GisWorkspace({ token, projects }) {
     map.on('style.load', () => setStyleVersion(version => version + 1));
 
     map.on('click', event => {
+      if (annotationModeRef.current) return;
       const features = map.queryRenderedFeatures(event.point).filter(feature =>
         String(feature.layer.id).startsWith('gislayer-') && feature.properties
       );
@@ -377,6 +412,25 @@ export default function GisWorkspace({ token, projects }) {
     else setWorkspace(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
+
+  // Annotations belong to a workspace, so switching workspaces must not leak notes between them.
+  useEffect(() => {
+    setAnnotations([]);
+    setAnnotationMode(false);
+    if (!workspaceId || !projectId) return;
+    let cancelled = false;
+    axios.get(`${API_URL}/api/gis/workspaces/${projectId}/${workspaceId}/annotations`, { headers: authHeaders })
+      .then(response => { if (!cancelled) setAnnotations(response.data.annotations || []); })
+      .catch(err => { if (!cancelled) setError(err.response?.data?.error || err.message); });
+    return () => { cancelled = true; };
+  }, [workspaceId, projectId, authHeaders]);
+
+  useEffect(() => {
+    annotationModeRef.current = annotationMode;
+    if (mapReady && mapRef.current) {
+      mapRef.current.getCanvas().style.cursor = annotationMode ? 'crosshair' : '';
+    }
+  }, [annotationMode, mapReady]);
 
   const refreshWorkspace = async () => {
     if (!workspaceId) return null;
@@ -527,6 +581,52 @@ export default function GisWorkspace({ token, projects }) {
     });
   }, [mapReady, styleVersion, workspace, payloads]);
 
+  // Feature labels are DOM markers rather than a MapLibre symbol layer: the local basemap has no
+  // glyph server, and labels must not introduce a new font/tile dependency. They stay capped so a
+  // large dataset cannot bury the map under thousands of DOM nodes.
+  useEffect(() => {
+    featureLabelMarkersRef.current.forEach(marker => marker.remove());
+    featureLabelMarkersRef.current = [];
+    if (!mapReady || !workspace || !mapRef.current) return;
+    const map = mapRef.current;
+    let shown = 0;
+
+    [...workspace.layers].sort((a, b) => a.zIndex - b.zIndex).forEach(layer => {
+      const style = layer.style || {};
+      const field = style.labelField;
+      if (!layer.visible || !field || style.labelsVisible === false || shown >= 400) return;
+      const features = payloads[layer.id]?.geojson?.features || [];
+      const placement = style.labelPlacement || 'center';
+      const anchor = placement === 'above' ? 'bottom' : placement === 'below' ? 'top' : 'center';
+      const size = Number(style.labelSize) || 12;
+
+      for (const feature of features) {
+        if (shown >= 400) break;
+        const value = feature.properties ? feature.properties[field] : null;
+        if (value === undefined || value === null || String(value).trim() === '') continue;
+        const point = representativePoint(feature.geometry);
+        if (!point) continue;
+        const element = document.createElement('div');
+        element.className = 'gis-feature-label';
+        element.textContent = String(value).slice(0, 80);
+        Object.assign(element.style, {
+          padding: '1px 4px', background: 'rgba(255,255,255,0.88)',
+          border: '1px solid rgba(29,39,48,0.25)', borderRadius: '3px',
+          font: `${size}px Calibri, sans-serif`, lineHeight: '1.2', color: '#1d2730',
+          pointerEvents: 'none', whiteSpace: 'nowrap', boxShadow: '0 1px 2px rgba(0,0,0,0.15)'
+        });
+        const marker = new maplibregl.Marker({ element, anchor }).setLngLat(point).addTo(map);
+        featureLabelMarkersRef.current.push(marker);
+        shown += 1;
+      }
+    });
+
+    return () => {
+      featureLabelMarkersRef.current.forEach(marker => marker.remove());
+      featureLabelMarkersRef.current = [];
+    };
+  }, [mapReady, styleVersion, workspace, payloads]);
+
   // Ephemeral OSM preview. It is deliberately not a workspace layer until it is saved as a
   // dataset, so previewing never changes the project by itself.
   useEffect(() => {
@@ -664,6 +764,98 @@ export default function GisWorkspace({ token, projects }) {
       setError(err.response?.data?.error || err.message);
     } finally {
       setSavingView(false);
+    }
+  };
+
+  const createAnnotationAt = async lngLat => {
+    const text = annotationText.trim();
+    if (!text) {
+      setError('Type the annotation text before placing it on the map.');
+      setAnnotationMode(false);
+      return;
+    }
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/gis/workspaces/${projectId}/${workspaceId}/annotations`,
+        { text, longitude: lngLat.lng, latitude: lngLat.lat, color: annotationColour },
+        { headers: authHeaders }
+      );
+      setAnnotations(current => [...current, response.data]);
+      setAnnotationText('');
+      setAnnotationMode(false);
+      setNotice('Annotation added. Drag its marker to move it.');
+      setTimeout(() => setNotice(''), 3000);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+      setAnnotationMode(false);
+    }
+  };
+  createAnnotationRef.current = createAnnotationAt;
+
+  useEffect(() => {
+    if (!mapReady) return;
+    const map = mapRef.current;
+    if (!map) return;
+    const handler = event => {
+      if (!annotationModeRef.current) return;
+      createAnnotationRef.current(event.lngLat);
+    };
+    map.on('click', handler);
+    return () => map.off('click', handler);
+  }, [mapReady]);
+
+  useEffect(() => {
+    annotationMarkersRef.current.forEach(marker => marker.remove());
+    annotationMarkersRef.current = [];
+    if (!mapReady || !mapRef.current) return;
+    const map = mapRef.current;
+
+    annotations.forEach(annotation => {
+      const element = document.createElement('div');
+      element.className = 'gis-annotation-marker';
+      element.textContent = annotation.text;
+      Object.assign(element.style, {
+        maxWidth: '240px', padding: '4px 7px', background: 'rgba(255,255,255,0.96)',
+        border: `1px solid ${annotation.color}`, borderLeft: `4px solid ${annotation.color}`,
+        borderRadius: '4px', color: '#1d2730', font: '12px Calibri, sans-serif',
+        lineHeight: '1.3', boxShadow: '0 3px 10px rgba(0,0,0,0.22)', cursor: 'grab'
+      });
+      const marker = new maplibregl.Marker({ element, anchor: 'bottom', draggable: true })
+        .setLngLat([annotation.longitude, annotation.latitude])
+        .addTo(map);
+      marker.on('dragend', async () => {
+        const position = marker.getLngLat();
+        try {
+          const response = await axios.put(
+            `${API_URL}/api/gis/workspaces/${projectId}/${workspaceId}/annotations/${annotation.id}`,
+            { longitude: position.lng, latitude: position.lat },
+            { headers: authHeaders }
+          );
+          setAnnotations(current => current.map(item => item.id === annotation.id ? response.data : item));
+        } catch (err) {
+          setError(err.response?.data?.error || err.message);
+        }
+      });
+      annotationMarkersRef.current.push(marker);
+    });
+
+    return () => {
+      annotationMarkersRef.current.forEach(marker => marker.remove());
+      annotationMarkersRef.current = [];
+    };
+  }, [annotations, mapReady, projectId, workspaceId, authHeaders]);
+
+  const deleteAnnotation = async annotation => {
+    try {
+      await axios.delete(
+        `${API_URL}/api/gis/workspaces/${projectId}/${workspaceId}/annotations/${annotation.id}`,
+        { headers: authHeaders }
+      );
+      setAnnotations(current => current.filter(item => item.id !== annotation.id));
+      setNotice('Annotation deleted.');
+      setTimeout(() => setNotice(''), 2500);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
     }
   };
 
@@ -971,6 +1163,11 @@ export default function GisWorkspace({ token, projects }) {
   };
 
   const project = projects.find(item => String(item.id) === String(projectId));
+  const labelFieldsByLayer = useMemo(() => {
+    const fields = {};
+    Object.entries(payloads).forEach(([layerId, payload]) => { fields[layerId] = labelFieldsFor(payload); });
+    return fields;
+  }, [payloads]);
   const gridStyle = narrow
     ? { ...styles.grid, gridTemplateColumns: 'minmax(0, 1fr)' }
     : styles.grid;
@@ -1311,6 +1508,65 @@ export default function GisWorkspace({ token, projects }) {
                             />
                           </label>
                         </div>
+                        <div style={{ borderTop: '1px solid #dfe6ec', marginTop: '8px', paddingTop: '8px' }}>
+                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                            Label field
+                            <select
+                              id={`layer-label-field-${layer.id}`}
+                              value={layer.style?.labelField || ''}
+                              onChange={event => setLayerStyle(layer, {
+                                labelField: event.target.value,
+                                labelsVisible: Boolean(event.target.value)
+                              })}
+                              style={{ display: 'block', width: '100%', padding: '5px 6px', marginTop: '3px', border: '1px solid #ccd6df', borderRadius: '4px', fontSize: '12px' }}
+                            >
+                              <option value="">No labels</option>
+                              {Array.from(new Set([...(labelFieldsByLayer[layer.id] || []), ...(layer.style?.labelField ? [layer.style.labelField] : [])])).map(field => (
+                                <option key={field} value={field}>{field}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
+                            <label style={{ fontSize: '11px', color: '#425466', display: 'flex', gap: '4px', alignItems: 'center' }}>
+                              <input
+                                id={`layer-labels-visible-${layer.id}`}
+                                type="checkbox"
+                                checked={layer.style?.labelsVisible !== false}
+                                disabled={!layer.style?.labelField}
+                                onChange={event => setLayerStyle(layer, { labelsVisible: event.target.checked })}
+                              />
+                              Show labels
+                            </label>
+                            <label style={{ fontSize: '11px', color: '#425466' }}>
+                              Placement
+                              <select
+                                id={`layer-label-placement-${layer.id}`}
+                                value={layer.style?.labelPlacement || 'center'}
+                                disabled={!layer.style?.labelField}
+                                onChange={event => setLayerStyle(layer, { labelPlacement: event.target.value })}
+                                style={{ marginLeft: '4px', padding: '3px 5px', border: '1px solid #ccd6df', borderRadius: '4px', fontSize: '11px' }}
+                              >
+                                <option value="above">Above</option>
+                                <option value="center">Center</option>
+                                <option value="below">Below</option>
+                              </select>
+                            </label>
+                            <label style={{ fontSize: '11px', color: '#425466' }}>
+                              Size · {Number(layer.style?.labelSize ?? 12)}px
+                              <input
+                                id={`layer-label-size-${layer.id}`}
+                                type="range" min="8" max="24" step="1"
+                                value={Number(layer.style?.labelSize ?? 12)}
+                                disabled={!layer.style?.labelField}
+                                onChange={event => setLayerStyle(layer, { labelSize: Number(event.target.value) })}
+                                style={{ display: 'block', width: '110px' }}
+                              />
+                            </label>
+                          </div>
+                          <p style={{ fontSize: '10px', color: '#5b6773', margin: '5px 0 0' }}>
+                            Up to 400 labels are drawn on screen. Labels and annotations are screen overlays and are not included in the raster print capture.
+                          </p>
+                        </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
                           <span style={{ fontSize: '10px', color: '#5b6773' }}>
                             {layer.kind === 'survey' ? 'Benchmarks stay red; colour applies to control points.' : 'Saved to the layer style.'}
@@ -1345,6 +1601,73 @@ export default function GisWorkspace({ token, projects }) {
                     )}
                   </div>
                 ))}
+              </div>
+
+              <div style={{ ...styles.card, marginTop: '12px' }}>
+                <h3 style={{ marginTop: 0 }}>Annotations</h3>
+                <p style={{ ...styles.helper, marginTop: 0 }}>
+                  Place map notes for context. Notes are saved to this workspace and can be dragged or deleted.
+                </p>
+                <input
+                  id="gis-annotation-text"
+                  value={annotationText}
+                  maxLength={240}
+                  onChange={event => setAnnotationText(event.target.value)}
+                  placeholder="Note text"
+                  style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                />
+                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input
+                    id="gis-annotation-colour"
+                    type="color"
+                    value={annotationColour}
+                    onChange={event => setAnnotationColour(event.target.value)}
+                    title="Annotation colour"
+                    style={{ width: '38px', height: '28px', padding: 0, border: '1px solid #ccd6df', borderRadius: '4px' }}
+                  />
+                  <button
+                    id="gis-annotation-place"
+                    onClick={() => {
+                      if (!annotationText.trim()) { setError('Type the annotation text before placing it on the map.'); return; }
+                      setError('');
+                      setAnnotationMode(true);
+                      setNotice('Click the map to place the annotation.');
+                    }}
+                    disabled={annotationMode}
+                    style={{ ...styles.button, padding: '7px 10px', opacity: annotationMode ? 0.65 : 1 }}
+                  >
+                    {annotationMode ? 'Click the map…' : 'Place on map'}
+                  </button>
+                  {annotationMode && (
+                    <button onClick={() => setAnnotationMode(false)} style={styles.buttonSmall}>Cancel</button>
+                  )}
+                </div>
+                {annotations.length > 0 && (
+                  <div style={{ marginTop: '9px', maxHeight: '190px', overflow: 'auto', borderTop: '1px solid #eee', paddingTop: '6px' }}>
+                    {annotations.map(annotation => (
+                      <div key={annotation.id} style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f2f4f6' }}>
+                        <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: annotation.color, flex: '0 0 auto' }} />
+                        <span style={{ flex: 1, fontSize: '12px', lineHeight: 1.3 }}>{annotation.text}</span>
+                        <button
+                          onClick={() => {
+                            if (mapRef.current) mapRef.current.flyTo({ center: [annotation.longitude, annotation.latitude], zoom: Math.max(mapRef.current.getZoom(), 15) });
+                          }}
+                          style={styles.buttonSmall}
+                        >
+                          Zoom
+                        </button>
+                        <button
+                          id={`gis-annotation-delete-${annotation.id}`}
+                          onClick={() => deleteAnnotation(annotation)}
+                          style={styles.buttonSmall}
+                          title="Delete annotation"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div style={{ ...styles.card, marginTop: '12px' }}>

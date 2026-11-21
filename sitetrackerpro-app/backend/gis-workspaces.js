@@ -12,8 +12,10 @@
  */
 
 const MAX_LAYERS = 50;
+const MAX_ANNOTATIONS = 200;
 const MAX_VIEW_BYTES = 20000;
 const MAX_STYLE_BYTES = 8000;
+const LABEL_PLACEMENTS = new Set(['above', 'center', 'below']);
 
 const LAYER_KINDS = new Set(['dataset', 'terrain', 'survey']);
 const KINDS_REQUIRING_DATASET = new Set(['dataset']);
@@ -66,8 +68,22 @@ module.exports = function createGisWorkspaceModule({
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS gis_annotations (
+        id SERIAL PRIMARY KEY,
+        gis_project_id INTEGER NOT NULL REFERENCES gis_projects(id) ON DELETE CASCADE,
+        text VARCHAR(240) NOT NULL,
+        longitude DOUBLE PRECISION NOT NULL,
+        latitude DOUBLE PRECISION NOT NULL,
+        color VARCHAR(16) NOT NULL DEFAULT '#b54708',
+        created_by INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
     await pool.query('CREATE INDEX IF NOT EXISTS idx_gis_projects_project ON gis_projects(project_id)');
     await pool.query('CREATE INDEX IF NOT EXISTS idx_gis_layers_workspace ON gis_layers(gis_project_id, z_index)');
+    await pool.query('CREATE INDEX IF NOT EXISTS idx_gis_annotations_workspace ON gis_annotations(gis_project_id)');
   }
 
   // ---------------------------------------------------------------------------
@@ -124,6 +140,17 @@ module.exports = function createGisWorkspaceModule({
     if (value.lineWidth !== undefined) style.lineWidth = Math.min(20, Math.max(0.5, toNum(value.lineWidth, 1)));
     if (value.fillOpacity !== undefined) style.fillOpacity = Math.min(1, Math.max(0, toNum(value.fillOpacity, 0.28)));
     if (value.pointSize !== undefined) style.pointSize = Math.min(30, Math.max(2, toNum(value.pointSize, 5)));
+    if (value.labelField !== undefined) {
+      const field = String(value.labelField || '').trim().slice(0, 80);
+      if (field) style.labelField = field;
+    }
+    if (value.labelsVisible !== undefined) style.labelsVisible = Boolean(value.labelsVisible);
+    if (value.labelPlacement !== undefined) {
+      const placement = String(value.labelPlacement);
+      if (!LABEL_PLACEMENTS.has(placement)) throw new Error('style.labelPlacement must be above, center or below.');
+      style.labelPlacement = placement;
+    }
+    if (value.labelSize !== undefined) style.labelSize = Math.min(24, Math.max(8, toNum(value.labelSize, 12)));
     return style;
   }
 
@@ -155,6 +182,38 @@ module.exports = function createGisWorkspaceModule({
     zIndex: row.z_index,
     createdAt: row.created_at
   });
+
+  const annotationSummary = row => ({
+    id: row.id,
+    workspaceId: row.gis_project_id,
+    text: row.text,
+    longitude: toNum(row.longitude),
+    latitude: toNum(row.latitude),
+    color: row.color,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  });
+
+  function cleanAnnotationText(value) {
+    const text = String(value === undefined || value === null ? '' : value).trim();
+    if (!text) throw new Error('Annotation text is required.');
+    return text.slice(0, 240);
+  }
+
+  function cleanAnnotationColor(value) {
+    const colour = String(value || '#b54708');
+    if (!/^#[0-9a-fA-F]{6}$/.test(colour)) throw new Error('Annotation colour must be a six-digit hex colour.');
+    return colour;
+  }
+
+  function cleanCoordinate(value, limit, label) {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      throw new Error(`${label} is required.`);
+    }
+    const number = Number(value);
+    if (!Number.isFinite(number) || Math.abs(number) > limit) throw new Error(`${label} is outside its valid range.`);
+    return number;
+  }
 
   async function loadWorkspace(projectId, workspaceId) {
     const result = await pool.query('SELECT * FROM gis_projects WHERE project_id = $1 AND id = $2', [projectId, workspaceId]);
@@ -405,6 +464,100 @@ module.exports = function createGisWorkspaceModule({
 
     const result = await pool.query('DELETE FROM gis_layers WHERE id = $1 AND gis_project_id = $2', [req.params.layerId, workspace.id]);
     if (result.rowCount === 0) return res.status(404).json({ error: 'Layer not found in this workspace.' });
+
+    await pool.query('UPDATE gis_projects SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [workspace.id]);
+    res.json({ success: true, deleted: 1 });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Map annotations (free-text notes pinned to the workspace)
+  // ---------------------------------------------------------------------------
+  app.get('/api/gis/workspaces/:projectId/:workspaceId/annotations', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const workspace = await loadWorkspace(req.projectId, req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'GIS workspace not found for this project.' });
+
+    const result = await pool.query(
+      'SELECT * FROM gis_annotations WHERE gis_project_id = $1 ORDER BY id ASC',
+      [workspace.id]
+    );
+    res.json({ annotations: result.rows.map(annotationSummary), count: result.rows.length });
+  }));
+
+  app.post('/api/gis/workspaces/:projectId/:workspaceId/annotations', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const workspace = await loadWorkspace(req.projectId, req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'GIS workspace not found for this project.' });
+
+    let text;
+    let color;
+    let longitude;
+    let latitude;
+    try {
+      text = cleanAnnotationText(req.body.text);
+      color = cleanAnnotationColor(req.body.color);
+      longitude = cleanCoordinate(req.body.longitude, 180, 'Longitude');
+      latitude = cleanCoordinate(req.body.latitude, 90, 'Latitude');
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const existing = await pool.query('SELECT COUNT(*)::int AS count FROM gis_annotations WHERE gis_project_id = $1', [workspace.id]);
+    if (existing.rows[0].count >= MAX_ANNOTATIONS) {
+      return res.status(400).json({ error: `A workspace can hold at most ${MAX_ANNOTATIONS} annotations.` });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO gis_annotations (gis_project_id, text, longitude, latitude, color, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [workspace.id, text, longitude, latitude, color, req.user?.id || null]
+    );
+    await pool.query('UPDATE gis_projects SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [workspace.id]);
+    res.status(201).json(annotationSummary(result.rows[0]));
+  }));
+
+  app.put('/api/gis/workspaces/:projectId/:workspaceId/annotations/:annotationId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const workspace = await loadWorkspace(req.projectId, req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'GIS workspace not found for this project.' });
+
+    const current = await pool.query(
+      'SELECT * FROM gis_annotations WHERE id = $1 AND gis_project_id = $2',
+      [req.params.annotationId, workspace.id]
+    );
+    if (current.rows.length === 0) return res.status(404).json({ error: 'Annotation not found in this workspace.' });
+    const annotation = current.rows[0];
+
+    let text = annotation.text;
+    let color = annotation.color;
+    let longitude = annotation.longitude;
+    let latitude = annotation.latitude;
+    try {
+      if (req.body.text !== undefined) text = cleanAnnotationText(req.body.text);
+      if (req.body.color !== undefined) color = cleanAnnotationColor(req.body.color);
+      if (req.body.longitude !== undefined) longitude = cleanCoordinate(req.body.longitude, 180, 'Longitude');
+      if (req.body.latitude !== undefined) latitude = cleanCoordinate(req.body.latitude, 90, 'Latitude');
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const result = await pool.query(
+      `UPDATE gis_annotations
+          SET text = $3, longitude = $4, latitude = $5, color = $6, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1 AND gis_project_id = $2
+        RETURNING *`,
+      [annotation.id, workspace.id, text, longitude, latitude, color]
+    );
+    await pool.query('UPDATE gis_projects SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [workspace.id]);
+    res.json(annotationSummary(result.rows[0]));
+  }));
+
+  app.delete('/api/gis/workspaces/:projectId/:workspaceId/annotations/:annotationId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const workspace = await loadWorkspace(req.projectId, req.params.workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'GIS workspace not found for this project.' });
+
+    const result = await pool.query(
+      'DELETE FROM gis_annotations WHERE id = $1 AND gis_project_id = $2',
+      [req.params.annotationId, workspace.id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Annotation not found in this workspace.' });
 
     await pool.query('UPDATE gis_projects SET updated_at = CURRENT_TIMESTAMP WHERE id = $1', [workspace.id]);
     res.json({ success: true, deleted: 1 });
