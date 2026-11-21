@@ -533,6 +533,10 @@ const terrainModule = createTerrainModule({ app, pool, verifyToken, requireProje
 const createGisWorkspaceModule = require('./gis-workspaces');
 const gisWorkspaceModule = createGisWorkspaceModule({ app, pool, verifyToken, requireProjectAccess });
 
+// Spatial analysis is its own module: it only reads datasets and writes derived datasets.
+const createGisAnalysisModule = require('./gis-analysis');
+const gisAnalysisModule = createGisAnalysisModule({ app, pool, verifyToken, requireProjectAccess });
+
 // ==================== AUTHENTICATION ENDPOINTS ====================
 
 // Register

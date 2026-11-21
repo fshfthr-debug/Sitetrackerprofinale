@@ -193,6 +193,17 @@ export default function GisWorkspace({ token, projects }) {
   const [reprojectDatasetId, setReprojectDatasetId] = useState('');
   const [reprojectCrs, setReprojectCrs] = useState('EPSG:32637');
   const [reprojecting, setReprojecting] = useState(false);
+  const [analysis, setAnalysis] = useState({
+    operation: 'buffer',
+    inputId: '',
+    overlayId: '',
+    distance: 100,
+    crs: 'EPSG:32637',
+    dissolveBy: '',
+    name: ''
+  });
+  const [analysisResult, setAnalysisResult] = useState(null);
+  const [analysing, setAnalysing] = useState(false);
   const [tableLayerId, setTableLayerId] = useState('');
   const [tableFilter, setTableFilter] = useState('');
   const [tableSort, setTableSort] = useState({ key: null, direction: 'asc' });
@@ -318,6 +329,15 @@ export default function GisWorkspace({ token, projects }) {
       }
     })();
   }, [projectId, authHeaders]);
+
+  useEffect(() => {
+    if (datasets.length === 0) return;
+    setAnalysis(current => ({
+      ...current,
+      inputId: current.inputId || String(datasets[0].id),
+      overlayId: current.overlayId || (datasets[1] ? String(datasets[1].id) : '')
+    }));
+  }, [datasets]);
 
   const loadWorkspace = async id => {
     if (!id) { setWorkspace(null); return; }
@@ -745,6 +765,48 @@ export default function GisWorkspace({ token, projects }) {
     });
   };
 
+  const runAnalysis = async () => {
+    if (!analysis.inputId) {
+      setError('Choose an input dataset for the analysis.');
+      return;
+    }
+    if (['clip', 'intersect'].includes(analysis.operation) && !analysis.overlayId) {
+      setError(`${analysis.operation} needs an overlay dataset.`);
+      return;
+    }
+    setAnalysing(true);
+    setError('');
+    setNotice('');
+    try {
+      const body = {
+        operation: analysis.operation,
+        inputDatasetId: Number(analysis.inputId),
+        crs: analysis.crs
+      };
+      if (analysis.operation === 'buffer') body.distance = Number(analysis.distance);
+      if (['clip', 'intersect'].includes(analysis.operation)) body.overlayDatasetId = Number(analysis.overlayId);
+      if (analysis.operation === 'dissolve' && analysis.dissolveBy.trim()) body.dissolveBy = analysis.dissolveBy.trim();
+      if (analysis.name.trim()) body.name = analysis.name.trim();
+
+      const response = await axios.post(`${API_URL}/api/gis/analysis/${projectId}`, body, { headers: authHeaders });
+      setAnalysisResult(response.data);
+      await refreshDatasets();
+      setDataVersion(version => version + 1);
+      if (workspaceId) {
+        await addLayer({ kind: 'dataset', datasetId: response.data.dataset.id, name: response.data.dataset.name });
+      }
+      const metrics = response.data.metrics;
+      setNotice(
+        `${analysis.operation} finished: ${response.data.outputFeatureCount} feature(s), computed in ${response.data.computationCrs}`
+        + `${metrics ? `, area ${metrics.areaM2.toLocaleString()} m²` : ''}. Saved as “${response.data.dataset.name}”.`
+      );
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    } finally {
+      setAnalysing(false);
+    }
+  };
+
   const project = projects.find(item => String(item.id) === String(projectId));
   const gridStyle = narrow
     ? { ...styles.grid, gridTemplateColumns: 'minmax(0, 1fr)' }
@@ -1134,6 +1196,148 @@ export default function GisWorkspace({ token, projects }) {
                     </div>
                   )}
                 </div>
+              </div>
+
+              <div style={{ ...styles.card, marginTop: '12px' }}>
+                <h3 style={{ marginTop: 0 }}>Spatial analysis</h3>
+                <p style={{ ...styles.helper, marginTop: 0 }}>
+                  Geometry is computed in the chosen projected CRS, then saved as a dataset in
+                  EPSG:4326 and added to the map. Geographic coordinates are never used for lengths or areas.
+                </p>
+
+                <label style={styles.helper}>Operation</label>
+                <select
+                  id="gis-analysis-operation"
+                  value={analysis.operation}
+                  onChange={event => setAnalysis(current => ({ ...current, operation: event.target.value }))}
+                  style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                >
+                  <option value="buffer">Buffer (metres)</option>
+                  <option value="clip">Clip to mask</option>
+                  <option value="intersect">Intersect</option>
+                  <option value="dissolve">Dissolve polygons</option>
+                  <option value="measure">Area / length</option>
+                </select>
+
+                <label style={styles.helper}>Input dataset</label>
+                <select
+                  id="gis-analysis-input"
+                  value={analysis.inputId}
+                  onChange={event => setAnalysis(current => ({ ...current, inputId: event.target.value }))}
+                  style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                >
+                  <option value="">-- Dataset --</option>
+                  {datasets.map(dataset => (
+                    <option key={dataset.id} value={dataset.id}>{dataset.name} ({dataset.crs})</option>
+                  ))}
+                </select>
+
+                {['clip', 'intersect'].includes(analysis.operation) && (
+                  <>
+                    <label style={styles.helper}>{analysis.operation === 'clip' ? 'Clip mask (polygons)' : 'Overlay dataset (polygons)'}</label>
+                    <select
+                      id="gis-analysis-overlay"
+                      value={analysis.overlayId}
+                      onChange={event => setAnalysis(current => ({ ...current, overlayId: event.target.value }))}
+                      style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                    >
+                      <option value="">-- Dataset --</option>
+                      {datasets.map(dataset => (
+                        <option key={dataset.id} value={dataset.id}>{dataset.name} ({dataset.crs})</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+
+                {analysis.operation === 'buffer' && (
+                  <>
+                    <label style={styles.helper}>Buffer distance (metres)</label>
+                    <input
+                      id="gis-analysis-distance"
+                      type="number"
+                      min="0.1"
+                      max="50000"
+                      step="1"
+                      value={analysis.distance}
+                      onChange={event => setAnalysis(current => ({ ...current, distance: event.target.value }))}
+                      style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                    />
+                  </>
+                )}
+
+                {analysis.operation === 'dissolve' && (
+                  <>
+                    <label style={styles.helper}>Dissolve by attribute (optional)</label>
+                    <input
+                      id="gis-analysis-dissolve-by"
+                      value={analysis.dissolveBy}
+                      onChange={event => setAnalysis(current => ({ ...current, dissolveBy: event.target.value }))}
+                      placeholder="e.g. kind; leaves empty to dissolve all"
+                      style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                    />
+                  </>
+                )}
+
+                <label style={styles.helper}>Computation CRS (projected, metres)</label>
+                <select
+                  id="gis-analysis-crs"
+                  value={analysis.crs}
+                  onChange={event => setAnalysis(current => ({ ...current, crs: event.target.value }))}
+                  style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                >
+                  {crsList.filter(item => item.units === 'metres' && item.code !== 'EPSG:3857').map(item => (
+                    <option key={item.code} value={item.code}>{item.code} — {item.name}</option>
+                  ))}
+                </select>
+
+                <input
+                  id="gis-analysis-name"
+                  value={analysis.name}
+                  onChange={event => setAnalysis(current => ({ ...current, name: event.target.value }))}
+                  placeholder="Result name (optional)"
+                  style={{ ...styles.input, width: '100%', marginBottom: '6px' }}
+                />
+
+                <button id="gis-analysis-run" onClick={runAnalysis} disabled={analysing} style={styles.button}>
+                  {analysing ? 'Computing…' : 'Run analysis'}
+                </button>
+
+                {analysisResult && (
+                  <div style={{ marginTop: '10px', background: '#f7f9fb', border: '1px solid #e3e9ef', borderRadius: '6px', padding: '9px', fontSize: '12px' }}>
+                    <strong>{analysisResult.operation}</strong> completed in {analysisResult.computationCrs}
+                    <div>{analysisResult.outputFeatureCount} feature(s) · saved as {analysisResult.dataset.name} ({analysisResult.dataset.crs})</div>
+                    {analysisResult.metrics && (
+                      <>
+                        <div style={{ marginTop: '5px' }}>
+                          Area: <strong>{analysisResult.metrics.areaM2.toLocaleString()} m²</strong>
+                          {' '}({(analysisResult.metrics.areaM2 / 10000).toLocaleString(undefined, { maximumFractionDigits: 4 })} ha)
+                        </div>
+                        <div>Perimeter: {analysisResult.metrics.perimeterM.toLocaleString()} m</div>
+                        <div>Length: {analysisResult.metrics.lengthM.toLocaleString()} m</div>
+                        {analysisResult.metrics.features.length > 0 && (
+                          <table style={{ width: '100%', marginTop: '6px', borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr style={{ color: '#5b6773' }}>
+                                <th style={{ textAlign: 'left', padding: '2px' }}>Feature</th>
+                                <th style={{ textAlign: 'right', padding: '2px' }}>Area m²</th>
+                                <th style={{ textAlign: 'right', padding: '2px' }}>Length m</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {analysisResult.metrics.features.slice(0, 5).map(feature => (
+                                <tr key={feature.index}>
+                                  <td style={{ padding: '2px' }}>{feature.properties.name || `#${feature.index}`}</td>
+                                  <td style={{ padding: '2px', textAlign: 'right' }}>{feature.areaM2.toLocaleString()}</td>
+                                  <td style={{ padding: '2px', textAlign: 'right' }}>{feature.lengthM.toLocaleString()}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}
