@@ -67,6 +67,25 @@ CREATE TABLE IF NOT EXISTS surveying_control_points (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Append-only audit trail for control-point statuses. Actor names and emails are
+-- snapshotted so the history remains readable after an account is renamed/deleted.
+CREATE TABLE IF NOT EXISTS control_point_status_history (
+  id SERIAL PRIMARY KEY,
+  control_point_id INTEGER REFERENCES surveying_control_points(id) ON DELETE SET NULL,
+  project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+  from_status VARCHAR(20),
+  to_status VARCHAR(20) NOT NULL,
+  changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  changed_by_name VARCHAR(255),
+  changed_by_email VARCHAR(255),
+  source VARCHAR(20) NOT NULL DEFAULT 'status',
+  note VARCHAR(500),
+  changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_control_point_status_history_point
+  ON control_point_status_history(control_point_id, changed_at DESC);
+
 -- Earthworks Calculations table (NEW)
 CREATE TABLE IF NOT EXISTS earthworks_calculations (
   id SERIAL PRIMARY KEY,

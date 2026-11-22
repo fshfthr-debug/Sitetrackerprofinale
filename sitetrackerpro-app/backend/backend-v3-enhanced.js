@@ -10,7 +10,13 @@ const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { calculateEarthworksVolumes } = require('./earthworks');
-const { CONTROL_POINT_STATUSES, normaliseStatus, validateControlPointRows } = require('./control-points');
+const {
+  CONTROL_POINT_STATUSES,
+  INITIAL_CONTROL_POINT_STATUSES,
+  canManageControlPointStatus,
+  normaliseStatus,
+  validateControlPointRows
+} = require('./control-points');
 require('dotenv').config();
 
 // Initialize Express
@@ -525,6 +531,52 @@ function requireProjectAccess(getProjectId) {
   };
 }
 
+// Status changes are a verification decision, not an edit. Keep the owner check
+// separate from ordinary project access so a future sharing feature cannot
+// accidentally let every project reader verify a survey point.
+function requireProjectOwner(getProjectId) {
+  return async (req, res, next) => {
+    try {
+      const projectId = getProjectId(req);
+      if (!projectId) return res.status(400).json({ error: 'projectId is required' });
+
+      const result = await pool.query('SELECT user_id FROM projects WHERE id = $1', [projectId]);
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
+      if (!canManageControlPointStatus(req.userId, result.rows[0].user_id)) {
+        return res.status(404).json({ error: 'Project not found' });
+      }
+
+      req.projectId = projectId;
+      req.projectOwnerId = result.rows[0].user_id;
+      next();
+    } catch (err) {
+      serverError(res, req.method + ' ' + req.path, err);
+    }
+  };
+}
+
+// Snapshot the actor into the audit row so the history survives a renamed or
+// deleted account. The foreign key is still useful for joins while it exists.
+async function getUserIdentity(userId, db = pool) {
+  const result = await db.query('SELECT id, full_name, email FROM users WHERE id = $1', [userId]);
+  return result.rows[0] || { id: userId || null, full_name: null, email: null };
+}
+
+async function withTransaction(work) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* original error wins */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 // ==================== GIS & GEOSPATIAL INTELLIGENCE ====================
 // Routes live in gis.js (OpenStreetMap/Overpass, datasets, CRS transforms, georeferencing).
 const createGisModule = require('./gis');
@@ -860,28 +912,45 @@ app.post('/api/surveying/control-points', verifyToken, requireProjectAccess(req 
     if (!cleanStatus) {
       return res.status(400).json({ error: `Unknown status. Use one of: ${CONTROL_POINT_STATUSES.join(', ')}.` });
     }
+    if (!INITIAL_CONTROL_POINT_STATUSES.includes(cleanStatus)) {
+      return res.status(400).json({
+        error: 'New control points can only be saved as Draft or Submitted. Verify them from the register after saving.'
+      });
+    }
 
-    const result = await pool.query(
-      `INSERT INTO surveying_control_points
-         (project_id, name, latitude, longitude, benchmark_elevation, ground_level, floor_level, foundation_depth, building_footprint, is_benchmark, vertical_datum, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
-      [
-        projectId,
-        cleanName || null,
-        latitude,
-        longitude,
-        benchmarkElevation,
-        groundLevel,
-        floorLevel,
-        foundationDepth,
-        buildingFootprint,
-        isBenchmark === true,
-        typeof verticalDatum === 'string' ? verticalDatum.trim().slice(0, 80) || null : null,
-        cleanStatus
-      ]
-    );
+    const saved = await withTransaction(async (db) => {
+      const result = await db.query(
+        `INSERT INTO surveying_control_points
+           (project_id, name, latitude, longitude, benchmark_elevation, ground_level, floor_level, foundation_depth, building_footprint, is_benchmark, vertical_datum, status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+        [
+          projectId,
+          cleanName || null,
+          latitude,
+          longitude,
+          benchmarkElevation,
+          groundLevel,
+          floorLevel,
+          foundationDepth,
+          buildingFootprint,
+          isBenchmark === true,
+          typeof verticalDatum === 'string' ? verticalDatum.trim().slice(0, 80) || null : null,
+          cleanStatus
+        ]
+      );
 
-    res.json(result.rows[0]);
+      const point = result.rows[0];
+      const actor = await getUserIdentity(req.userId, db);
+      await db.query(
+        `INSERT INTO control_point_status_history
+           (control_point_id, project_id, from_status, to_status, changed_by, changed_by_name, changed_by_email, source)
+         VALUES ($1, $2, NULL, $3, $4, $5, $6, 'created')`,
+        [point.id, projectId, point.status, actor.id, actor.full_name, actor.email]
+      );
+      return { ...point, can_change_status: true };
+    });
+
+    res.json(saved);
   } catch (err) {
     serverError(res, req.method + ' ' + req.path, err);
   }
@@ -893,8 +962,12 @@ app.post('/api/surveying/control-points', verifyToken, requireProjectAccess(req 
 app.get('/api/surveying/:projectId/control-points', verifyToken, requireProjectAccess(req => req.params.projectId), async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT * FROM surveying_control_points WHERE project_id = $1 ORDER BY created_at DESC, id DESC',
-      [req.params.projectId]
+      `SELECT cp.*, (p.user_id = $2) AS can_change_status
+         FROM surveying_control_points cp
+         JOIN projects p ON p.id = cp.project_id
+        WHERE cp.project_id = $1
+        ORDER BY cp.created_at DESC, cp.id DESC`,
+      [req.params.projectId, req.userId]
     );
     res.json(result.rows);
   } catch (err) {
@@ -955,12 +1028,25 @@ app.post('/api/surveying/control-points/import', verifyToken, requireProjectAcce
       );
     });
 
-    const inserted = await pool.query(
-      `INSERT INTO surveying_control_points
-         (project_id, name, latitude, longitude, benchmark_elevation, is_benchmark, vertical_datum, status)
-       VALUES ${placeholders.join(', ')} RETURNING *`,
-      params
-    );
+    const inserted = await withTransaction(async (db) => {
+      const result = await db.query(
+        `INSERT INTO surveying_control_points
+           (project_id, name, latitude, longitude, benchmark_elevation, is_benchmark, vertical_datum, status)
+         VALUES ${placeholders.join(', ')} RETURNING *`,
+        params
+      );
+
+      const actor = await getUserIdentity(req.userId, db);
+      await db.query(
+        `INSERT INTO control_point_status_history
+           (control_point_id, project_id, from_status, to_status, changed_by, changed_by_name, changed_by_email, source)
+         SELECT id, project_id, NULL, status, $1, $2, $3, 'imported'
+           FROM surveying_control_points
+          WHERE id = ANY($4::int[])`,
+        [actor.id, actor.full_name, actor.email, result.rows.map(row => row.id)]
+      );
+      return result;
+    });
 
     res.json({
       imported: inserted.rows.length,
@@ -974,25 +1060,76 @@ app.post('/api/surveying/control-points/import', verifyToken, requireProjectAcce
   }
 });
 
-// Change the lifecycle status of one control point. The project id is required in
-// the body so the same ownership middleware protects this route.
-app.patch('/api/surveying/control-points/:id', verifyToken, requireProjectAccess(req => req.body.projectId), async (req, res) => {
+// Change the lifecycle status of one control point. This is deliberately stricter
+// than ordinary project access: only the project owner may verify or reject a
+// point, and the update plus its audit row commit together.
+app.patch('/api/surveying/control-points/:id', verifyToken, requireProjectOwner(req => req.body.projectId), async (req, res) => {
   try {
     const status = normaliseStatus(req.body.status, null);
     if (!status) {
       return res.status(400).json({ error: `Unknown status. Use one of: ${CONTROL_POINT_STATUSES.join(', ')}.` });
     }
 
-    const result = await pool.query(
-      `UPDATE surveying_control_points
-          SET status = $1, updated_at = CURRENT_TIMESTAMP
-        WHERE id = $2 AND project_id = $3
-        RETURNING *`,
-      [status, req.params.id, req.projectId]
+    const note = typeof req.body.note === 'string'
+      ? req.body.note.trim().slice(0, 500) || null
+      : null;
+
+    const updated = await withTransaction(async (db) => {
+      const current = await db.query(
+        'SELECT * FROM surveying_control_points WHERE id = $1 AND project_id = $2 FOR UPDATE',
+        [req.params.id, req.projectId]
+      );
+      if (current.rows.length === 0) return null;
+
+      const point = current.rows[0];
+      if (point.status === status) return { ...point, can_change_status: true, status_changed: false };
+
+      const result = await db.query(
+        `UPDATE surveying_control_points
+            SET status = $1, updated_at = CURRENT_TIMESTAMP
+          WHERE id = $2 AND project_id = $3
+          RETURNING *`,
+        [status, req.params.id, req.projectId]
+      );
+
+      const actor = await getUserIdentity(req.userId, db);
+      await db.query(
+        `INSERT INTO control_point_status_history
+           (control_point_id, project_id, from_status, to_status, changed_by, changed_by_name, changed_by_email, source, note)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'status', $8)`,
+        [point.id, req.projectId, point.status, status, actor.id, actor.full_name, actor.email, note]
+      );
+
+      return { ...result.rows[0], can_change_status: true, status_changed: true };
+    });
+
+    if (!updated) return res.status(404).json({ error: 'Control point not found.' });
+    res.json(updated);
+  } catch (err) {
+    serverError(res, req.method + ' ' + req.path, err);
+  }
+});
+
+// Append-only audit trail for one point. The owner is the only role that can
+// change a status, so only the owner needs to read the review history.
+app.get('/api/surveying/control-points/:id/history', verifyToken, requireProjectOwner(req => req.query.projectId), async (req, res) => {
+  try {
+    const point = await pool.query(
+      'SELECT 1 FROM surveying_control_points WHERE id = $1 AND project_id = $2',
+      [req.params.id, req.projectId]
+    );
+    if (point.rows.length === 0) return res.status(404).json({ error: 'Control point not found.' });
+
+    const history = await pool.query(
+      `SELECT id, control_point_id, project_id, from_status, to_status,
+              changed_by, changed_by_name, changed_by_email, source, note, changed_at
+         FROM control_point_status_history
+        WHERE control_point_id = $1 AND project_id = $2
+        ORDER BY changed_at DESC, id DESC`,
+      [req.params.id, req.projectId]
     );
 
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Control point not found.' });
-    res.json(result.rows[0]);
+    res.json(history.rows);
   } catch (err) {
     serverError(res, req.method + ' ' + req.path, err);
   }
@@ -1831,6 +1968,37 @@ async function ensureSchema() {
   // clearly-marked name once; re-running the upgrade does not overwrite names
   // that a surveyor has since edited.
   await pool.query("UPDATE surveying_control_points SET name = 'Legacy control point ' || id WHERE name IS NULL");
+
+  // Append-only status audit. The actor snapshot is intentional: deleting an
+  // account must not erase who verified a point or leave an unreadable history.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS control_point_status_history (
+      id SERIAL PRIMARY KEY,
+      control_point_id INTEGER REFERENCES surveying_control_points(id) ON DELETE SET NULL,
+      project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+      from_status VARCHAR(20),
+      to_status VARCHAR(20) NOT NULL,
+      changed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      changed_by_name VARCHAR(255),
+      changed_by_email VARCHAR(255),
+      source VARCHAR(20) NOT NULL DEFAULT 'status',
+      note VARCHAR(500),
+      changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_control_point_status_history_point ON control_point_status_history(control_point_id, changed_at DESC)');
+
+  // Give points created before the audit existed a baseline entry. This is
+  // one-time per point; real changes are added by the API from now on.
+  await pool.query(`
+    INSERT INTO control_point_status_history
+      (control_point_id, project_id, from_status, to_status, changed_by_name, source, changed_at)
+    SELECT cp.id, cp.project_id, NULL, cp.status, 'System migration', 'migration', COALESCE(cp.updated_at, cp.created_at, CURRENT_TIMESTAMP)
+      FROM surveying_control_points cp
+     WHERE NOT EXISTS (
+       SELECT 1 FROM control_point_status_history h WHERE h.control_point_id = cp.id
+     )
+  `);
 }
 
 app.listen(PORT, () => {

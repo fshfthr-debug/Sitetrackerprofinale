@@ -2,7 +2,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { validateControlPointRows } = require('../control-points');
+const {
+  INITIAL_CONTROL_POINT_STATUSES,
+  canManageControlPointStatus,
+  validateControlPointRows
+} = require('../control-points');
 
 const row = (overrides = {}) => ({
   row: 2,
@@ -76,6 +80,25 @@ test('rejects duplicate names in the file and in the project', () => {
   assert.equal(result.errors.length, 2);
   assert.match(result.errors[0].message, /already exists/);
   assert.match(result.errors[1].message, /already exists/);
+});
+
+test('new points cannot be imported already verified or rejected', () => {
+  const result = validateControlPointRows([
+    row({ status: 'verified' }),
+    row({ row: 3, name: 'BM-02', status: 'rejected' })
+  ]);
+
+  assert.equal(result.points.length, 0);
+  assert.equal(result.errors.length, 2);
+  assert.match(result.errors[0].message, /Draft or Submitted/);
+  assert.deepEqual([...INITIAL_CONTROL_POINT_STATUSES], ['draft', 'submitted']);
+});
+
+test('only the project owner can manage control-point statuses', () => {
+  assert.equal(canManageControlPointStatus(7, 7), true);
+  assert.equal(canManageControlPointStatus(7, 8), false);
+  assert.equal(canManageControlPointStatus(null, 7), false);
+  assert.equal(canManageControlPointStatus(7, null), false);
 });
 
 test('accepts a valid point even when another row is invalid', () => {

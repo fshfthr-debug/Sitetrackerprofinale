@@ -16,6 +16,8 @@ export const CONTROL_POINT_STATUSES = [
   'superseded'
 ];
 
+export const INITIAL_CONTROL_POINT_STATUSES = ['draft', 'submitted'];
+
 export const CONTROL_POINT_STATUS_LABELS = {
   draft: 'Draft',
   submitted: 'Submitted',

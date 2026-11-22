@@ -7,7 +7,7 @@ import Icon from './ui/Icon';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { buildCsv, downloadCsv, safeFilePart, todayStamp } from './csv';
-import { CONTROL_POINT_STATUSES, parseControlPointText, statusLabel } from './controlPoints';
+import { CONTROL_POINT_STATUSES, INITIAL_CONTROL_POINT_STATUSES, parseControlPointText, statusLabel } from './controlPoints';
 
 const BimViewer = React.lazy(() => import('./BimViewer'));
 
@@ -1702,6 +1702,10 @@ function SurveyingControlPointsScreen({ token, projects }) {
   const [importInputKey, setImportInputKey] = useState(0);
   const [defaultDatum, setDefaultDatum] = useState('Project benchmark as recorded');
   const [defaultStatus, setDefaultStatus] = useState('submitted');
+  const [historyPoint, setHistoryPoint] = useState(null);
+  const [historyEvents, setHistoryEvents] = useState([]);
+  const [historyError, setHistoryError] = useState('');
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const loadPoints = useCallback(async (id) => {
     if (!id) { setPoints([]); return; }
@@ -1727,6 +1731,9 @@ function SurveyingControlPointsScreen({ token, projects }) {
     setImportReport(null);
     setImportError('');
     setImportInputKey(key => key + 1);
+    setHistoryPoint(null);
+    setHistoryEvents([]);
+    setHistoryError('');
     loadPoints(projectId);
   }, [projectId, loadPoints]);
 
@@ -1843,10 +1850,30 @@ function SurveyingControlPointsScreen({ token, projects }) {
         headers: { Authorization: `Bearer ${token}` }
       });
       setPoints(current => current.map(item => item.id === point.id ? response.data : item));
+      if (historyPoint?.id === point.id) await loadPointHistory(point);
     } catch (err) {
       setPointsError(err.response?.data?.error || 'The control-point status could not be saved.');
     } finally {
       setUpdatingStatus(null);
+    }
+  };
+
+  const loadPointHistory = async (point) => {
+    if (!projectId || !point) return;
+    setHistoryPoint(point);
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const response = await axios.get(`${API_URL}/api/surveying/control-points/${point.id}/history`, {
+        params: { projectId },
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setHistoryEvents(Array.isArray(response.data) ? response.data : []);
+    } catch (err) {
+      setHistoryEvents([]);
+      setHistoryError(err.response?.data?.error || 'The status history could not be loaded.');
+    } finally {
+      setHistoryLoading(false);
     }
   };
 
@@ -1943,10 +1970,13 @@ function SurveyingControlPointsScreen({ token, projects }) {
                   <div className="field">
                     <label htmlFor="survey-status">Status</label>
                     <select id="survey-status" className="input" value={pointStatus} onChange={(e) => setPointStatus(e.target.value)}>
-                      {CONTROL_POINT_STATUSES.map(status => (
+                      {INITIAL_CONTROL_POINT_STATUSES.map(status => (
                         <option key={status} value={status}>{statusLabel(status)}</option>
                       ))}
                     </select>
+                    <span className="helper" style={{ marginTop: 6 }}>
+                      Verification happens from the register after the point is saved.
+                    </span>
                   </div>
                 </div>
                 <div className="form-actions">
@@ -2029,10 +2059,13 @@ function SurveyingControlPointsScreen({ token, projects }) {
                 <div className="field">
                   <label htmlFor="control-default-status">Default status</label>
                   <select id="control-default-status" className="input" value={defaultStatus} onChange={(e) => setDefaultStatus(e.target.value)}>
-                    {CONTROL_POINT_STATUSES.map(status => (
+                    {INITIAL_CONTROL_POINT_STATUSES.map(status => (
                       <option key={status} value={status}>{statusLabel(status)}</option>
                     ))}
                   </select>
+                  <span className="helper" style={{ marginTop: 6 }}>
+                    New points can only be Draft or Submitted. The project owner verifies them from the register.
+                  </span>
                 </div>
               </div>
               <div className="form-actions">
@@ -2081,7 +2114,7 @@ function SurveyingControlPointsScreen({ token, projects }) {
             <div className="panel-head">
               <div className="panel-head-copy">
                 <h3>Control point register</h3>
-                <p>Every point recorded against this project, newest first.</p>
+                <p>Every point recorded against this project, newest first. Only the project owner can change a status; every change is recorded.</p>
               </div>
               <span className="panel-eyebrow">{points.length} RECORDED</span>
             </div>
@@ -2093,7 +2126,7 @@ function SurveyingControlPointsScreen({ token, projects }) {
               ) : (
                 <div className="table-wrap">
                   <table className="data-table">
-                    <thead><tr><th>Name</th><th>Status</th><th className="num">Latitude</th><th className="num">Longitude</th><th className="num">Benchmark (m)</th><th>Vertical datum</th><th>Recorded</th></tr></thead>
+                    <thead><tr><th>Name</th><th>Status</th><th className="num">Latitude</th><th className="num">Longitude</th><th className="num">Benchmark (m)</th><th>Vertical datum</th><th>Recorded</th><th>History</th></tr></thead>
                     <tbody>
                       {points.map(point => (
                         <tr key={point.id}>
@@ -2105,7 +2138,8 @@ function SurveyingControlPointsScreen({ token, projects }) {
                             <select
                               className={`status-select ${point.status || 'submitted'}`}
                               value={point.status || 'submitted'}
-                              disabled={updatingStatus === point.id}
+                              disabled={updatingStatus === point.id || point.can_change_status === false}
+                              title={point.can_change_status === false ? 'Only the project owner can change this status.' : 'Changing a status records who made the change.'}
                               onChange={(e) => updatePointStatus(point, e.target.value)}
                               aria-label={`Status for ${point.name || `point ${point.id}`}`}
                             >
@@ -2119,6 +2153,11 @@ function SurveyingControlPointsScreen({ token, projects }) {
                           <td className="num">{fmt(point.benchmark_elevation, 2)}</td>
                           <td>{point.vertical_datum || '—'}</td>
                           <td>{point.created_at ? new Date(point.created_at).toLocaleDateString() : '—'}</td>
+                          <td>
+                            <button type="button" className="btn btn-ghost btn-sm" onClick={() => loadPointHistory(point)}>
+                              History
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -2127,6 +2166,50 @@ function SurveyingControlPointsScreen({ token, projects }) {
               )}
             </div>
           </section>
+
+          {historyPoint && (
+            <section className="panel" style={{ marginTop: 18 }}>
+              <div className="panel-head">
+                <div className="panel-head-copy">
+                  <h3>Status history · {historyPoint.name || `Point ${historyPoint.id}`}</h3>
+                  <p>Append-only record of who changed this point, when, and from which status.</p>
+                </div>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setHistoryPoint(null); setHistoryEvents([]); setHistoryError(''); }}>
+                  Close
+                </button>
+              </div>
+              <div className="panel-body flush">
+                {historyLoading ? (
+                  <p className="helper" style={{ padding: '16px 20px', margin: 0 }}>Loading history…</p>
+                ) : historyError ? (
+                  <p className="helper" style={{ padding: '16px 20px', margin: 0, color: 'var(--danger)' }}>{historyError}</p>
+                ) : historyEvents.length === 0 ? (
+                  <p className="helper" style={{ padding: '16px 20px', margin: 0 }}>No status history recorded yet.</p>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="data-table">
+                      <thead><tr><th>When</th><th>From</th><th>To</th><th>Changed by</th><th>Source</th><th>Note</th></tr></thead>
+                      <tbody>
+                        {historyEvents.map(event => (
+                          <tr key={event.id}>
+                            <td>{event.changed_at ? new Date(event.changed_at).toLocaleString() : '—'}</td>
+                            <td>{event.from_status ? statusLabel(event.from_status) : 'Initial'}</td>
+                            <td><span className={`status-chip ${event.to_status}`}>{statusLabel(event.to_status)}</span></td>
+                            <td>
+                              {event.changed_by_name || event.changed_by_email || 'System'}
+                              {event.changed_by_email && <span className="table-sub">{event.changed_by_email}</span>}
+                            </td>
+                            <td>{event.source}</td>
+                            <td>{event.note || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
           {saved && (
             <div className="section-note" role="status" style={{ color: 'var(--signal-strong)', background: 'var(--signal-soft)', borderColor: '#b9ddcd' }}>

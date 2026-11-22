@@ -15,6 +15,16 @@ const CONTROL_POINT_STATUSES = Object.freeze([
 
 const STATUS_SET = new Set(CONTROL_POINT_STATUSES);
 
+// A new point is field data, not a verification decision. Verification and the
+// exception statuses are set later, from the register, by the project owner.
+const INITIAL_CONTROL_POINT_STATUSES = Object.freeze(['draft', 'submitted']);
+const INITIAL_STATUS_SET = new Set(INITIAL_CONTROL_POINT_STATUSES);
+
+// Status changes belong to the project owner, not merely to anyone who can read
+// the project. Kept pure so the policy is testable without a database.
+const canManageControlPointStatus = (userId, projectOwnerId) =>
+  Boolean(userId) && Boolean(projectOwnerId) && Number(userId) === Number(projectOwnerId);
+
 const normaliseStatus = (value, fallback = 'submitted') => {
   const text = value === undefined || value === null ? '' : String(value).trim().toLowerCase();
   if (!text) return STATUS_SET.has(fallback) ? fallback : 'submitted';
@@ -100,6 +110,13 @@ function validateControlPointRows(rows, {
       });
       return;
     }
+    if (!INITIAL_STATUS_SET.has(status)) {
+      errors.push({
+        row: rowNumber,
+        message: 'New control points can only be imported as Draft or Submitted. Verify them from the register after import.'
+      });
+      return;
+    }
 
     seenNames.add(key);
     points.push({
@@ -119,6 +136,8 @@ function validateControlPointRows(rows, {
 
 module.exports = {
   CONTROL_POINT_STATUSES,
+  INITIAL_CONTROL_POINT_STATUSES,
+  canManageControlPointStatus,
   normaliseStatus,
   validateControlPointRows
 };
