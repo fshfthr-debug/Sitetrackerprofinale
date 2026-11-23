@@ -1510,7 +1510,14 @@ code, kbd, samp {
    width. The panel's mobile min-height is also dropped: combined with the padding
    on the shell it made a page that fits scroll by a few pixels. */
 .auth-single .auth-panel { min-height: 0; padding: 0; background: transparent; }
-.auth-single .auth-form .brand { display: flex; }
+
+/* The wordmark is styled for the dark brand column, so on this light card it needs
+   the same overrides the narrow layout already uses: light-on-light text would be
+   invisible and the mark would sit against the card edge. */
+.auth-single .auth-form .brand { display: flex; padding: 0 0 22px; }
+.auth-single .auth-form .brand-word { color: var(--ink); font-size: 18px; }
+.auth-single .auth-form .brand-sub { color: var(--muted); }
+.auth-single .auth-form .brand-mark { width: 42px; height: 42px; }
 
 .auth-switch { margin-top: 18px; color: var(--ink-3); font-size: 10.5px; text-align: center; }
 .auth-switch button { color: var(--copper); font-weight: 600; background: none; border: 0; }
