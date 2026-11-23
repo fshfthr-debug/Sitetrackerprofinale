@@ -15,6 +15,11 @@ const MAX_DRAFT_CHARS = 4000;
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_HISTORY_CHARS = 3000;
 const REQUEST_TIMEOUT_MS = 30000;
+const USER_AGENT = 'SiteTrackerPro/1.0';
+// Z.ai answers 429 while a previous call still holds the free Flash model's
+// single-request concurrency slot, so retry before reporting a failure.
+const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
+const RETRY_DELAYS_MS = [1200, 3000];
 
 const SYSTEM_PROMPT = `You are Site AI inside SiteTrackerPro, a construction and infrastructure intelligence workspace.
 
@@ -138,7 +143,7 @@ function parseModelAnswer(raw) {
   return { answer: (answer || bullets.join(' ')).slice(0, 6000), bullets };
 }
 
-async function requestCompletion({
+async function requestOnce({
   apiKey,
   baseUrl = DEFAULT_BASE_URL,
   model = DEFAULT_MODEL,
@@ -160,7 +165,8 @@ async function requestCompletion({
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-        'Accept-Language': 'en-US,en'
+        'Accept-Language': 'en-US,en',
+        'User-Agent': USER_AGENT
       },
       body: JSON.stringify({
         model,
@@ -177,8 +183,12 @@ async function requestCompletion({
     try { payload = JSON.parse(raw); } catch (_) { /* handled below */ }
 
     if (!response.ok) {
+      // Z.ai puts a business code in the body (1302 rate limit, 1113 no quota,
+      // 1305 overloaded). Keep only that code for the log line.
+      const providerCode = payload?.error?.code ?? payload?.code ?? null;
       const error = new Error(`AI provider returned HTTP ${response.status}`);
       error.status = response.status;
+      error.providerCode = providerCode === null ? null : String(providerCode).slice(0, 40);
       throw error;
     }
 
@@ -201,6 +211,26 @@ async function requestCompletion({
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function requestCompletion(options = {}) {
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await requestOnce(options);
+    } catch (error) {
+      lastError = error;
+      // A timeout is not retried: the user is already waiting on a slow answer.
+      const retryable =
+        RETRYABLE_STATUSES.has(error.status) ||
+        (error.name === 'TypeError' && !error.status);
+      if (!retryable || attempt === RETRY_DELAYS_MS.length) break;
+      await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS_MS[attempt]));
+    }
+  }
+
+  throw lastError;
 }
 
 function createAiModule({ app, verifyToken }) {
@@ -260,7 +290,8 @@ function createAiModule({ app, verifyToken }) {
       });
     } catch (err) {
       // Provider text can include request details, so only the status is logged.
-      console.error(`[ai] hosted request failed${err.status ? ` (HTTP ${err.status})` : ''}`);
+      const providerCode = err.providerCode ? ` code ${err.providerCode}` : '';
+      console.error(`[ai] hosted request failed${err.status ? ` (HTTP ${err.status}${providerCode})` : ''}`);
       if (err.name === 'AbortError') {
         return res.status(504).json({ error: 'The hosted AI took too long to answer. Try again.' });
       }
@@ -268,6 +299,11 @@ function createAiModule({ app, verifyToken }) {
         return res.status(502).json({ error: 'The hosted AI key was rejected. Check ZAI_API_KEY on the server.' });
       }
       if (err.status === 429) {
+        if (err.providerCode === '1113') {
+          return res.status(429).json({
+            error: 'The hosted AI account has no remaining quota. Check the Z.ai balance or resource package.'
+          });
+        }
         return res.status(429).json({ error: 'The hosted AI is busy right now. Try again shortly.' });
       }
       return res.status(502).json({ error: 'The hosted AI could not answer. Try again shortly.' });
