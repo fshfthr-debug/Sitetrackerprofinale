@@ -33,6 +33,8 @@ export default function SiteTrackerPro() {
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [projects, setProjects] = useState([]);
   const [selectedProject, setSelectedProject] = useState(null);
+  const [projectsError, setProjectsError] = useState('');
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   useEffect(() => {
     if (token) {
@@ -40,19 +42,43 @@ export default function SiteTrackerPro() {
     }
   }, [token]);
 
+  // A token that has expired must send the user back to sign-in. Without this the
+  // portfolio simply looked empty, which reads as "my projects are gone". A wrong
+  // current password also answers 401, so only the token errors end the session.
+  useEffect(() => {
+    const interceptor = axios.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        const status = error.response?.status;
+        const message = error.response?.data?.error;
+        if (status === 401 && (message === 'Invalid token' || message === 'No token')) {
+          localStorage.removeItem('token');
+          setSessionExpired(true);
+          setToken(null);
+        }
+        return Promise.reject(error);
+      }
+    );
+    return () => axios.interceptors.response.eject(interceptor);
+  }, []);
+
   const fetchProjects = async () => {
     try {
       const response = await axios.get(`${API_URL}/api/projects`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setProjects(response.data);
+      setProjectsError('');
+      return response.data;
     } catch (err) {
       console.error('Error fetching projects:', err);
+      setProjectsError(err.response?.data?.error || 'Could not load your projects. Check the connection and try again.');
+      return null;
     }
   };
 
   if (!token) {
-    return <AuthScreen setToken={setToken} />;
+    return <AuthScreen setToken={(nextToken) => { setSessionExpired(false); setToken(nextToken); }} sessionExpired={sessionExpired} />;
   }
 
   const activeProject = selectedProject || projects[0] || null;
@@ -76,8 +102,20 @@ export default function SiteTrackerPro() {
           setCurrentScreen={setCurrentScreen}
         />
       )}
-      {currentScreen === 'projects' && <ProjectsScreen token={token} projects={projects} setSelectedProject={setSelectedProject} setCurrentScreen={setCurrentScreen} />}
-      {currentScreen === 'project-details' && <ProjectDetailsScreen token={token} project={selectedProject} setCurrentScreen={setCurrentScreen} />}
+      {currentScreen === 'projects' && <ProjectsScreen token={token} projects={projects} projectsError={projectsError} fetchProjects={fetchProjects} setSelectedProject={setSelectedProject} setCurrentScreen={setCurrentScreen} />}
+      {currentScreen === 'project-details' && (
+        <ProjectDetailsScreen
+          token={token}
+          project={selectedProject}
+          setCurrentScreen={setCurrentScreen}
+          onProjectUpdated={(updated) => { setSelectedProject(updated); fetchProjects(); }}
+          onProjectDeleted={(id) => {
+            setSelectedProject(null);
+            setProjects((list) => list.filter((item) => item.id !== id));
+            setCurrentScreen('projects');
+          }}
+        />
+      )}
       {currentScreen === 'new-project' && <NewProjectScreen token={token} fetchProjects={fetchProjects} setCurrentScreen={setCurrentScreen} />}
       {currentScreen === 'bim-import' && <BimImportScreen token={token} projects={projects} />}
       {currentScreen === 'quantity-survey' && <QuantitySurveyScreen token={token} projects={projects} />}
@@ -93,10 +131,11 @@ export default function SiteTrackerPro() {
 }
 
 // ===================== AUTHENTICATION SCREEN =====================
-function AuthScreen({ setToken }) {
+function AuthScreen({ setToken, sessionExpired = false }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [company, setCompany] = useState('');
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -111,7 +150,7 @@ function AuthScreen({ setToken }) {
         email,
         password,
         fullName: !isLogin ? fullName : undefined,
-        company: !isLogin ? 'Construction Company' : undefined
+        company: !isLogin ? company.trim() || undefined : undefined
       });
 
       localStorage.setItem('token', response.data.token);
@@ -160,6 +199,12 @@ function AuthScreen({ setToken }) {
             {isLogin ? 'Sign in to the operating picture.' : 'Start with a project, then bring your field data into context.'}
           </p>
 
+          {sessionExpired && !error && (
+            <div className="section-note" style={{ background: 'var(--amber-soft)', borderColor: '#e8d4ae', color: '#7b4a0d' }} role="status">
+              <Icon name="clock" size={13} /> Your session expired. Sign in again to continue where you left off.
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="auth-fields">
             {!isLogin && (
               <div className="field">
@@ -172,6 +217,20 @@ function AuthScreen({ setToken }) {
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
                   required
+                />
+              </div>
+            )}
+            {!isLogin && (
+              <div className="field">
+                <label htmlFor="auth-company">Company</label>
+                <input
+                  id="auth-company"
+                  className="input"
+                  type="text"
+                  placeholder="e.g. Timona Geospatial and Survey"
+                  autoComplete="organization"
+                  value={company}
+                  onChange={(e) => setCompany(e.target.value)}
                 />
               </div>
             )}
@@ -3997,7 +4056,7 @@ function FraudDetectionScreen({ token, projects }) {
 }
 
 // ===================== PROJECTS SCREEN =====================
-function ProjectsScreen({ token, projects, setSelectedProject, setCurrentScreen }) {
+function ProjectsScreen({ token, projects, projectsError, fetchProjects, setSelectedProject, setCurrentScreen }) {
   return (
     <div className="page">
       <div className="page-head">
@@ -4012,6 +4071,15 @@ function ProjectsScreen({ token, projects, setSelectedProject, setCurrentScreen 
           </button>
         </div>
       </div>
+
+      {projectsError && (
+        <div className="section-note" role="alert" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: '#ecc9c4' }}>
+          <Icon name="alert" size={13} /> {projectsError}
+          <button className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => fetchProjects && fetchProjects()}>
+            <Icon name="refresh" size={12} /> Try again
+          </button>
+        </div>
+      )}
 
       {projects.length === 0 ? (
         <div className="empty">
@@ -4056,7 +4124,7 @@ function ProjectsScreen({ token, projects, setSelectedProject, setCurrentScreen 
 }
 
 // ===================== PROJECT DETAILS SCREEN =====================
-function ProjectDetailsScreen({ token, project, setCurrentScreen }) {
+function ProjectDetailsScreen({ token, project, setCurrentScreen, onProjectUpdated, onProjectDeleted }) {
   const [survey, setSurvey] = useState(null);
   const [bom, setBom] = useState(null);
   const [progress, setProgress] = useState(null);
@@ -4064,9 +4132,76 @@ function ProjectDetailsScreen({ token, project, setCurrentScreen }) {
   const [earthworks, setEarthworks] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [form, setForm] = useState({ name: '', description: '', budget: '', location: '', timeline: '' });
 
   const authHeaders = { Authorization: `Bearer ${token}` };
   const projectId = project?.id;
+
+  const startEdit = () => {
+    setActionError('');
+    setForm({
+      name: project?.name || '',
+      description: project?.description || '',
+      budget: project?.budget == null ? '' : String(project.budget),
+      location: project?.location || '',
+      timeline: project?.timeline == null ? '' : String(project.timeline)
+    });
+    setEditing(true);
+  };
+
+  const handleSave = async (event) => {
+    event.preventDefault();
+    setActionError('');
+
+    if (!form.name.trim()) {
+      setActionError('A project name is required.');
+      return;
+    }
+    const budget = form.budget === '' ? null : Number(form.budget);
+    if (budget !== null && (!Number.isFinite(budget) || budget < 0)) {
+      setActionError('Budget must be a number of 0 or more.');
+      return;
+    }
+    const timeline = form.timeline === '' ? null : Number(form.timeline);
+    if (timeline !== null && (!Number.isFinite(timeline) || timeline < 0)) {
+      setActionError('Timeline must be a number of months, 0 or more.');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const response = await axios.patch(`${API_URL}/api/projects/${projectId}`, {
+        name: form.name.trim(),
+        description: form.description.trim(),
+        location: form.location.trim(),
+        budget,
+        timeline
+      }, { headers: authHeaders });
+      setEditing(false);
+      if (onProjectUpdated) onProjectUpdated(response.data);
+    } catch (err) {
+      setActionError(err.response?.data?.error || err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!project) return;
+    const confirmed = window.confirm(`Delete “${project.name}” and every record attached to it? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setActionError('');
+    try {
+      await axios.delete(`${API_URL}/api/projects/${projectId}`, { headers: authHeaders });
+      if (onProjectDeleted) onProjectDeleted(projectId);
+    } catch (err) {
+      setActionError(err.response?.data?.error || err.message);
+    }
+  };
 
   useEffect(() => {
     if (!projectId) return undefined;
@@ -4175,15 +4310,68 @@ function ProjectDetailsScreen({ token, project, setCurrentScreen }) {
           </div>
         </div>
         <div className="page-actions">
+          <button className="btn" onClick={startEdit}>
+            <Icon name="settings" size={13} /> Edit project
+          </button>
           <button className="btn" onClick={() => setCurrentScreen('gis')}>
             <Icon name="map" size={13} /> Open map
           </button>
           <button className="btn btn-primary" onClick={() => setCurrentScreen('3d-viewer')}>
             <Icon name="cube" size={13} /> Digital twin
           </button>
+          <button className="btn" onClick={handleDelete} style={{ color: 'var(--danger)' }}>
+            Delete
+          </button>
         </div>
       </div>
 
+      {editing && (
+        <section className="panel" style={{ marginBottom: 14 }}>
+          <div className="panel-head">
+            <div className="panel-head-copy">
+              <h3>Edit project</h3>
+              <p>Correct the name, site or commercial envelope. Take-off, survey and map records stay attached.</p>
+            </div>
+            <span className="panel-eyebrow">Editing</span>
+          </div>
+          <form className="panel-body" onSubmit={handleSave}>
+            <div className="form-grid">
+              <div className="field full">
+                <label htmlFor="edit-project-name">Project name</label>
+                <input id="edit-project-name" className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+              </div>
+              <div className="field full">
+                <label htmlFor="edit-project-description">Description</label>
+                <textarea
+                  id="edit-project-description"
+                  className="input"
+                  style={{ height: 86, paddingTop: 9, resize: 'vertical' }}
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                />
+              </div>
+              <div className="field">
+                <label htmlFor="edit-project-budget">Budget (ETB)</label>
+                <input id="edit-project-budget" className="input" type="number" min="0" step="0.01" value={form.budget} onChange={(e) => setForm({ ...form, budget: e.target.value })} />
+              </div>
+              <div className="field">
+                <label htmlFor="edit-project-timeline">Timeline (months)</label>
+                <input id="edit-project-timeline" className="input" type="number" min="0" step="1" value={form.timeline} onChange={(e) => setForm({ ...form, timeline: e.target.value })} />
+              </div>
+              <div className="field full">
+                <label htmlFor="edit-project-location">Location</label>
+                <input id="edit-project-location" className="input" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+              </div>
+            </div>
+            <div className="toolbar-row" style={{ marginTop: 12 }}>
+              <button type="submit" className="btn btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+              <button type="button" className="btn" onClick={() => setEditing(false)} disabled={saving}>Cancel</button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {actionError && <div className="section-note" role="alert" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: '#ecc9c4' }}><Icon name="alert" size={13} /> {actionError}</div>}
       {error && <div className="section-note" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: '#ecc9c4' }}><Icon name="alert" size={13} /> {error}</div>}
       {loading && <div className="section-note"><Icon name="refresh" size={12} /> Loading connected project records…</div>}
 

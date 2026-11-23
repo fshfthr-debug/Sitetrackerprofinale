@@ -781,6 +781,122 @@ app.get('/api/projects/:id', verifyToken, async (req, res) => {
   }
 });
 
+// Project ownership is the access rule: a project is personal data, so editing and
+// deleting are reserved for the account that created it.
+function projectProblems(body) {
+  const problems = [];
+  const name = typeof body.name === 'string' ? body.name.trim() : '';
+  if (!name) problems.push('A project name is required.');
+  if (name.length > 255) problems.push('Keep the project name under 255 characters.');
+
+  const budget = body.budget === '' || body.budget === null || body.budget === undefined ? null : Number(body.budget);
+  if (budget !== null && (!Number.isFinite(budget) || budget < 0)) problems.push('Budget must be a number of 0 or more.');
+
+  const timeline = body.timeline === '' || body.timeline === null || body.timeline === undefined ? null : Number(body.timeline);
+  if (timeline !== null && (!Number.isFinite(timeline) || timeline < 0)) problems.push('Timeline must be a number of months, 0 or more.');
+
+  return problems;
+}
+
+const cleanText = (value, max) => {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const clean = String(value).trim();
+  return clean.length === 0 ? null : clean.slice(0, max);
+};
+
+// Edit a project's identity and commercial envelope.
+app.patch('/api/projects/:id', verifyToken, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const existing = await pool.query('SELECT * FROM projects WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
+
+    const problems = projectProblems(body);
+    if (problems.length > 0) return res.status(400).json({ error: problems[0], problems });
+
+    const current = existing.rows[0];
+    // Fields the caller leaves out keep their stored value, so a partial edit
+    // cannot silently wipe a description or a location.
+    const next = {
+      name: cleanText(body.name, 255),
+      description: body.description === undefined ? current.description : cleanText(body.description, 4000),
+      location: body.location === undefined ? current.location : cleanText(body.location, 255),
+      budget: body.budget === undefined
+        ? current.budget
+        : (body.budget === '' || body.budget === null ? null : Number(body.budget)),
+      timeline: body.timeline === undefined
+        ? current.timeline
+        : (body.timeline === '' || body.timeline === null ? null : Number(body.timeline))
+    };
+
+    const result = await pool.query(
+      `UPDATE projects
+          SET name = $1, description = $2, location = $3, budget = $4, timeline = $5, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $6 AND user_id = $7
+        RETURNING *`,
+      [next.name, next.description, next.location, next.budget, next.timeline, current.id, req.userId]
+    );
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    serverError(res, 'PATCH /api/projects/:id', err);
+  }
+});
+
+// Everything that hangs off a project, in the order the foreign keys allow.
+// Tables missing from an older database are skipped, so a delete cannot half-fail
+// because a feature was added to the schema after the database was created.
+const PROJECT_CHILD_TABLES = [
+  'gis_projects', // cascades to gis_layers and gis_annotations
+  'gis_alignment_points',
+  'gis_georeferencing',
+  'gis_saved_queries',
+  'gis_datasets',
+  'terrain_surveys',
+  'control_point_status_history',
+  'surveying_control_points',
+  'bim_components',
+  'bim_models',
+  'model_cache_3d',
+  'earthworks_calculations',
+  'materials_custom',
+  'project_material_rates',
+  'bom',
+  'budget_forecast',
+  'delivery_schedule',
+  'project_progress',
+  'fraud_detections',
+  'deliveries',
+  'workers',
+  'safety_incidents',
+  'activity_logs'
+];
+
+// Delete a project and its records. All or nothing: a failure anywhere rolls the
+// whole thing back rather than leaving orphaned rows behind.
+app.delete('/api/projects/:id', verifyToken, async (req, res) => {
+  try {
+    const existing = await pool.query('SELECT id, name FROM projects WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
+
+    await withTransaction(async (client) => {
+      for (const table of PROJECT_CHILD_TABLES) {
+        try {
+          await client.query(`DELETE FROM ${table} WHERE project_id = $1`, [existing.rows[0].id]);
+        } catch (err) {
+          if (err.code !== '42P01') throw err; // undefined_table: feature not in this database yet
+        }
+      }
+      await client.query('DELETE FROM projects WHERE id = $1 AND user_id = $2', [existing.rows[0].id, req.userId]);
+    });
+
+    res.json({ success: true, deleted: { id: existing.rows[0].id, name: existing.rows[0].name } });
+  } catch (err) {
+    serverError(res, 'DELETE /api/projects/:id', err);
+  }
+});
+
 // ==================== BIM INTEGRATION ENDPOINTS ====================
 
 // Import a BIM model / take-off file: stores the upload, then parses it into
