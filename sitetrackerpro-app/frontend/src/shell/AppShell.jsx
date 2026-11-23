@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Icon from '../ui/Icon';
+import { answerQuestion } from '../ai/siteAi';
+import { buildHostedContext, conversationForModel, draftFromAnswer, shouldUseHostedAi } from '../ai/hosted';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -222,9 +224,14 @@ function CommandPalette({ open, onClose, currentScreen, projects, onNavigate, on
 
 function IntelligenceDock({ open, onClose, token, projects, activeProject, onNavigate }) {
   const [stats, setStats] = useState(null);
+  const [workspace, setWorkspace] = useState({});
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
+  const [thinking, setThinking] = useState(false);
+  const [shareContext, setShareContext] = useState(true);
+  const busyRef = useRef(false);
   const threadRef = useRef(null);
+  const project = activeProject || projects[0] || null;
 
   useEffect(() => {
     if (!open || !token) return;
@@ -235,107 +242,105 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
     return () => { cancelled = true; };
   }, [open, token]);
 
+  // Load the records behind the active project so answers cite real progress,
+  // quantities, materials, survey points and risk flags rather than a generic brief.
+  useEffect(() => {
+    if (!open || !token || !project?.id) {
+      setWorkspace({});
+      return undefined;
+    }
+
+    let cancelled = false;
+    const headers = { Authorization: `Bearer ${token}` };
+    const optional = (url) => axios.get(url, { headers }).catch(() => null);
+
+    setWorkspace({});
+    Promise.all([
+      optional(`${API_URL}/api/progress/${project.id}`),
+      optional(`${API_URL}/api/progress/${project.id}/history`),
+      optional(`${API_URL}/api/quantity-survey/${project.id}`),
+      optional(`${API_URL}/api/bim/components/${project.id}`),
+      optional(`${API_URL}/api/surveying/${project.id}/control-points`),
+      optional(`${API_URL}/api/fraud-detection/${project.id}`),
+      optional(`${API_URL}/api/bim/${project.id}`),
+      optional(`${API_URL}/api/budget/forecast/${project.id}`)
+    ]).then(([progress, history, survey, components, points, alerts, models, forecast]) => {
+      if (cancelled) return;
+      setWorkspace({
+        progress: progress?.data || null,
+        history: Array.isArray(history?.data) ? history.data : [],
+        quantitySurvey: Array.isArray(survey?.data?.items) ? survey.data : null,
+        components: Array.isArray(components?.data) ? components.data : [],
+        controlPoints: Array.isArray(points?.data) ? points.data : [],
+        alerts: Array.isArray(alerts?.data) ? alerts.data : [],
+        models: Array.isArray(models?.data) ? models.data : [],
+        forecast: forecast?.data || null
+      });
+    });
+
+    return () => { cancelled = true; };
+  }, [open, token, project?.id]);
+
   useEffect(() => {
     if (threadRef.current) threadRef.current.scrollTop = threadRef.current.scrollHeight;
   }, [messages]);
 
-  const project = activeProject || projects[0] || null;
   const alertCount = Number(stats?.activeAlerts) || 0;
   const totalBudget = projects.reduce((sum, item) => sum + (Number(item.budget) || 0), 0);
-  const missingBudgets = projects.filter(item => !Number(item.budget)).length;
-  const missingLocations = projects.filter(item => !item.location).length;
 
-  const answerFor = (prompt) => {
-    const term = String(prompt).toLowerCase();
+  const answerFor = (prompt) => answerQuestion(prompt, {
+    projects,
+    project,
+    stats,
+    ...workspace
+  });
 
-    if (term.includes('risk') || term.includes('attention') || term.includes('wrong')) {
-      const findings = [];
-      if (alertCount > 0) findings.push(`${alertCount} payment risk flag${alertCount === 1 ? '' : 's'} currently need review.`);
-      if (missingBudgets > 0) findings.push(`${missingBudgets} project${missingBudgets === 1 ? ' has' : 's have'} no budget, so progress cannot be measured against cost.`);
-      if (missingLocations > 0) findings.push(`${missingLocations} project${missingLocations === 1 ? ' is' : 's are'} missing a site location, which weakens map context.`);
-      if (findings.length === 0) findings.push('No portfolio-level blockers are visible. Risk flags are clear, budgets are set and every project has a location.');
-      return {
-        text: 'Here is the current attention picture, grounded in the records loaded in this workspace.',
-        bullets: findings,
-        followups: ['Brief me on the portfolio', 'Draft an inspection checklist']
-      };
-    }
-
-    if (term.includes('inspection') || term.includes('checklist') || term.includes('field')) {
-      return {
-        text: 'A field inspection sequence for this stage of work:',
-        bullets: [
-          'Confirm control points and the working CRS before capturing new observations.',
-          'Photograph access, boundaries and any work covered by the next payment application.',
-          'Record quantities against the current BIM take-off, with a note on any variance.',
-          'Capture GPS and timestamp evidence for every issue that could affect certification.',
-          'Mark the inspection complete only after photos and notes have synced.'
-        ],
-        followups: ['What needs attention?', 'Summarise project status']
-      };
-    }
-
-    if (term.includes('budget') || term.includes('cost') || term.includes('spend')) {
-      return {
-        text: `The active portfolio carries ETB ${totalBudget.toLocaleString(undefined, { maximumFractionDigits: 0 })} across ${projects.length} project${projects.length === 1 ? '' : 's'}.`,
-        bullets: [
-          project ? `${project.name} is budgeted at ETB ${(Number(project.budget) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}.` : 'No project is selected.',
-          'Open Progress & budget to compare recorded spend against physical progress.',
-          'Generate a forecast before certifying the next payment cycle.'
-        ],
-        followups: ['What needs attention?', 'Brief me on the portfolio']
-      };
-    }
-
-    if (term.includes('map') || term.includes('gis') || term.includes('location')) {
-      return {
-        text: 'Map intelligence is the spatial source of truth for the portfolio.',
-        bullets: [
-          'Check the working CRS and saved georeferencing fit before placing any model geometry.',
-          'Use Map intelligence → Map workspace to inspect layers, annotations and the georeferencing preview.',
-          'Treat OpenStreetMap context as reference only; survey observations remain the measured record.'
-        ],
-        followups: ['Summarise project status', 'Draft an inspection checklist']
-      };
-    }
-
-    if (term.includes('project') || term.includes('status') || term.includes('summary')) {
-      if (!project) {
-        return {
-          text: 'There is no active project in this workspace yet.',
-          bullets: ['Create a project to unlock field survey, quantity survey, GIS and digital twin workflows.'],
-          followups: ['Brief me on the portfolio']
-        };
-      }
-      return {
-        text: `${project.name} is the active project${project.location ? ` in ${project.location}` : ''}.`,
-        bullets: [
-          `Budget: ETB ${(Number(project.budget) || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}.`,
-          'Use Progress & budget to record physical progress and spend, then compare the burn gap.',
-          'Use Digital twin to inspect imported components, terrain and model completeness.',
-          'Use Risk & fraud before releasing a payment certificate.'
-        ],
-        followups: ['What needs attention?', 'Draft an inspection checklist']
-      };
-    }
-
-    return {
-      text: `Across ${projects.length} active project${projects.length === 1 ? '' : 's'}, this workspace is managing ETB ${totalBudget.toLocaleString(undefined, { maximumFractionDigits: 0 })}.`,
-      bullets: [
-        alertCount > 0 ? `${alertCount} risk flag${alertCount === 1 ? '' : 's'} need review.` : 'No payment risk flags are open.',
-        missingBudgets > 0 ? `${missingBudgets} project${missingBudgets === 1 ? ' needs' : 's need'} a budget before cost performance can be measured.` : 'Budgets are in place for every project.',
-        'The next highest-value move is to review project progress, then inspect spatial evidence before certifying work.'
-      ],
-      followups: ['What needs attention?', 'Summarise project status', 'Draft an inspection checklist']
-    };
-  };
-
-  const ask = (prompt) => {
+  const ask = async (prompt) => {
     const question = String(prompt || '').trim();
-    if (!question) return;
-    const answer = answerFor(question);
-    setMessages(current => [...current, { role: 'user', text: question }, { role: 'assistant', ...answer }]);
+    if (!question || busyRef.current) return;
+
+    const local = answerFor(question);
+    const history = conversationForModel(messages);
+    setMessages(current => [...current, { role: 'user', text: question }]);
     setInput('');
+
+    // Record lookups, app help and engineering maths stay deterministic. Open-ended
+    // construction practice and unmatched questions go to the hosted model.
+    if (!shouldUseHostedAi(local) || !token) {
+      setMessages(current => [...current, { role: 'assistant', ...local }]);
+      return;
+    }
+
+    busyRef.current = true;
+    setThinking(true);
+    try {
+      const response = await axios.post(`${API_URL}/api/ai/chat`, {
+        question,
+        context: shareContext ? buildHostedContext({ projects, project, stats, ...workspace }) : null,
+        history: shareContext ? history : [],
+        draft: shareContext ? draftFromAnswer(local) : ''
+      }, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 45000
+      });
+
+      const hosted = {
+        text: response.data?.answer || 'The hosted AI returned an empty answer.',
+        bullets: Array.isArray(response.data?.bullets) ? response.data.bullets.slice(0, 8) : [],
+        followups: local.followups || [],
+        tag: shareContext ? `Hosted AI · ${response.data?.model || 'GLM'}` : 'Hosted AI · question only'
+      };
+      setMessages(current => [...current, { role: 'assistant', ...hosted }]);
+    } catch (error) {
+      const reason = error.response?.data?.error || 'The hosted AI is unavailable right now.';
+      const fallback = local.tag === 'Not enough records'
+        ? { ...local, text: `${local.text} ${reason}`, tag: 'Hosted AI unavailable' }
+        : { ...local, bullets: [...(local.bullets || []), reason], tag: local.tag };
+      setMessages(current => [...current, { role: 'assistant', ...fallback }]);
+    } finally {
+      busyRef.current = false;
+      setThinking(false);
+    }
   };
 
   if (!open) return null;
@@ -350,7 +355,7 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
           </div>
           <div className="drawer-head-copy">
             <h3>Site AI</h3>
-            <div className="drawer-sub"><span className="status-dot" /> Grounded in workspace records · preview</div>
+            <div className="drawer-sub"><span className="status-dot" /> Grounded records · hosted AI for open questions</div>
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close assistant"><Icon name="x" /></button>
         </div>
@@ -358,7 +363,7 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
         <div className="drawer-body" ref={threadRef}>
           <div className="ai-context">
             <div className="ai-context-label"><Icon name="sparkles" size={12} /> Operational context</div>
-            <p>{project ? `${project.name} is active. Ask for a brief, a risk read or a field checklist.` : 'No project is active yet. Ask about the workspace or create your first project.'}</p>
+            <p>{project ? `${project.name} is active. Ask for progress, quantities, risk or an engineering take-off.` : 'No project is active yet. Ask about the workspace or create your first project.'}</p>
             <div className="ai-context-meta">
               <span className="chip">{projects.length} project{projects.length === 1 ? '' : 's'}</span>
               <span className="chip">ETB {compactMoney(totalBudget)}</span>
@@ -366,12 +371,30 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
             </div>
           </div>
 
+          <label className="ai-privacy">
+            <input
+              type="checkbox"
+              checked={shareContext}
+              onChange={event => setShareContext(event.target.checked)}
+            />
+            <span>
+              <strong>Share project summary</strong>
+              <small>Progress notes are never sent. Turn this off to send only your question and no chat history.</small>
+            </span>
+          </label>
+
           {messages.length === 0 && (
             <>
               <div className="ai-suggestions">
-                {['Brief me on the portfolio', 'What needs attention?', 'Summarise project status', 'Draft an inspection checklist'].map(prompt => (
-                  <button key={prompt} className="ai-suggestion" onClick={() => ask(prompt)}>
-                    <Icon name={prompt.includes('inspection') ? 'clipboard' : prompt.includes('attention') ? 'alert' : prompt.includes('status') ? 'activity' : 'sparkles'} size={14} />
+                {[
+                  'Cost performance of the active project',
+                  'Concrete for 10 m³ C25',
+                  'Quantities on the active project',
+                  'What needs attention?',
+                  'Draft an inspection checklist'
+                ].map(prompt => (
+                  <button key={prompt} className="ai-suggestion" onClick={() => ask(prompt)} disabled={thinking}>
+                    <Icon name={prompt.includes('inspection') ? 'clipboard' : prompt.includes('attention') ? 'alert' : prompt.includes('Concrete') ? 'box' : prompt.includes('Quantities') ? 'database' : 'activity'} size={14} />
                     {prompt}
                   </button>
                 ))}
@@ -395,7 +418,7 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
             </>
           )}
 
-          <div className="ai-thread">
+          <div className="ai-thread" aria-live="polite">
             {messages.map((message, index) => (
               <div key={index} className={`ai-message ${message.role}`}>
                 {message.role === 'assistant' ? (
@@ -404,6 +427,7 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
                     {message.bullets?.length > 0 && (
                       <ul>{message.bullets.map((item, itemIndex) => <li key={itemIndex}>{item}</li>)}</ul>
                     )}
+                    {message.tag && <div className="ai-tag">{message.tag}</div>}
                     {message.followups?.length > 0 && (
                       <div className="ai-followup">
                         {message.followups.map(followup => (
@@ -415,26 +439,32 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
                 ) : message.text}
               </div>
             ))}
+            {thinking && (
+              <div className="ai-message assistant ai-thinking">
+                <span className="ai-dot" /><span className="ai-dot" /><span className="ai-dot" />
+                <span>Asking the hosted AI…</span>
+              </div>
+            )}
           </div>
         </div>
 
-        <form className="ai-compose" onSubmit={event => { event.preventDefault(); ask(input); }}>
+        <form className="ai-compose" onSubmit={event => { event.preventDefault(); if (!thinking) ask(input); }}>
           <textarea
             value={input}
             onChange={event => setInput(event.target.value)}
             onKeyDown={event => {
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                ask(input);
+                if (!thinking) ask(input);
               }
             }}
-            placeholder="Ask about risk, progress, map evidence…"
+            placeholder="Ask anything about the project or construction…"
             aria-label="Message Site AI"
             rows={1}
           />
-          <button type="submit" className="ai-send" disabled={!input.trim()} aria-label="Send message"><Icon name="arrowRight" size={16} /></button>
+          <button type="submit" className="ai-send" disabled={!input.trim() || thinking} aria-label="Send message"><Icon name="arrowRight" size={16} /></button>
         </form>
-        <div className="ai-disclaimer">Preview intelligence computed from workspace records. Verify before acting or certifying work.</div>
+        <div className="ai-disclaimer">Grounded in workspace records, with hosted AI for open questions. Progress notes stay out of hosted requests. Verify before acting or certifying work.</div>
 
         {!project && (
           <div style={{ padding: '0 14px 12px' }}>

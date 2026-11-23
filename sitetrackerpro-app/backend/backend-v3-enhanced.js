@@ -10,6 +10,7 @@ const { Pool } = require('pg');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { calculateEarthworksVolumes } = require('./earthworks');
+const { createAiModule } = require('./ai');
 const {
   CONTROL_POINT_STATUSES,
   INITIAL_CONTROL_POINT_STATUSES,
@@ -699,6 +700,10 @@ function verifyToken(req, res, next) {
     res.status(401).json({ error: 'Invalid token' });
   }
 }
+
+// Hosted Site AI. The provider key and prompt stay on the server; the browser
+// calls this authenticated route after the local Site AI cannot answer.
+const aiModule = createAiModule({ app, verifyToken });
 
 // Change your own password. The same policy as registration is enforced here, so a
 // weak password cannot be swapped in later, and the current password is required so

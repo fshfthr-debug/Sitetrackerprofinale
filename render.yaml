@@ -54,6 +54,16 @@ services:
       # because .env is (correctly) not shipped inside the image.
       - key: DISABLE_REGISTRATION
         value: "1"
+      # Hosted Site AI. Leave the key blank until you have created it at
+      # https://z.ai/manage-apikey/apikey-list; the built-in Site AI still works.
+      - key: ZAI_API_KEY
+        sync: false
+      - key: ZAI_API_BASE
+        value: https://api.z.ai/api/paas/v4
+      - key: ZAI_MODEL
+        value: glm-4.7-flash
+      - key: AI_RATE_LIMIT
+        value: "30"
 
     # DISK — needed for "starter" and above, NOT allowed on the free plan.
     # To move to Starter: change `plan:` above to "starter" and uncomment these
