@@ -11,6 +11,7 @@ const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const { calculateEarthworksVolumes } = require('./earthworks');
 const { createAiModule } = require('./ai');
+const { emailDeliveryChannel, sendPasswordResetEmail } = require('./email');
 const {
   CONTROL_POINT_STATUSES,
   INITIAL_CONTROL_POINT_STATUSES,
@@ -267,6 +268,25 @@ const registerLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Too many accounts created from this network. Please try again later.' }
+});
+
+// A reset request sends email, so it is throttled per network the same way.
+const forgotLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number(process.env.FORGOT_MAX_PER_HOUR) || 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many reset requests. Please wait an hour and try again.' }
+});
+
+// Guessing a reset token is infeasible (32 random bytes), but the endpoint is
+// still capped so a script cannot hammer the database through it.
+const resetLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: 20,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please wait an hour and request a new link.' }
 });
 
 // The limiter above works per network address. Someone with a pool of addresses
@@ -739,6 +759,119 @@ app.post('/auth/change-password', verifyToken, async (req, res) => {
     res.json({ success: true, message: 'Password updated.' });
   } catch (err) {
     serverError(res, 'POST /auth/change-password', err);
+  }
+});
+
+// ==================== FORGOT PASSWORD ====================
+// Only a hash of each reset token is stored, so a copy of the database cannot be
+// turned into working reset links. Tokens are single use and expire.
+const RESET_TOKEN_MINUTES = Number(process.env.RESET_TOKEN_MINUTES) || 60;
+const hashResetToken = (token) => require('crypto').createHash('sha256').update(String(token)).digest('hex');
+
+// Where the emailed link should point. APP_BASE_URL wins so a rewrite or proxy
+// cannot produce a link to an internal address; otherwise the request's own host.
+function resetBaseUrl(req) {
+  const configured = String(process.env.APP_BASE_URL || process.env.PUBLIC_URL || '').trim().replace(/\/+$/, '');
+  return configured || (req.protocol + '://' + (req.get('host') || 'localhost'));
+}
+
+// Ask for a reset link. The reply is the same whether or not the address has an
+// account, and the work done is the same, so this cannot be used to find out who
+// has an account here.
+app.post('/auth/forgot-password', forgotLimiter, async (req, res) => {
+  const genericReply = 'If that email address has an account, a reset link is on its way.';
+  try {
+    const cleanEmail = typeof (req.body || {}).email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Enter the email address you sign in with.' });
+    }
+
+    const found = await pool.query('SELECT id, email FROM users WHERE LOWER(email) = $1', [cleanEmail]);
+    if (found.rows.length === 0) {
+      await bcrypt.compare('not-the-password', DUMMY_PASSWORD_HASH);
+      return res.json({ success: true, message: genericReply, delivery: emailDeliveryChannel() });
+    }
+
+    const user = found.rows[0];
+    const token = require('crypto').randomBytes(32).toString('hex');
+
+    // Housekeeping, and only one live link per account: a newer request retires
+    // every link that was sent before it.
+    await pool.query("DELETE FROM password_reset_tokens WHERE expires_at < NOW() - INTERVAL '1 day'");
+    await pool.query('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL', [user.id]);
+    await pool.query(
+      'INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, NOW() + ($3 || \' minutes\')::interval)',
+      [user.id, hashResetToken(token), String(RESET_TOKEN_MINUTES)]
+    );
+
+    const link = resetBaseUrl(req) + '/?reset=' + token;
+    const delivery = await sendPasswordResetEmail({ to: user.email, link, minutes: RESET_TOKEN_MINUTES });
+
+    // Written whenever the mail did not go out, so the account can still be
+    // recovered from the host's log (Render dashboard -> Logs).
+    if (delivery !== 'resend' && delivery !== 'sendgrid') {
+      console.log('[password-reset] link for ' + user.email + ' (delivery: ' + delivery + '): ' + link);
+    }
+
+    res.json({ success: true, message: genericReply, delivery });
+  } catch (err) {
+    serverError(res, 'POST /auth/forgot-password', err);
+  }
+});
+
+// Spend a reset link and set the new password. The same password policy as
+// registration applies, so recovery cannot be used to install a weak password.
+app.post('/auth/reset-password', resetLimiter, async (req, res) => {
+  try {
+    const { token, newPassword } = req.body || {};
+
+    if (typeof token !== 'string' || token.length < 32) {
+      return res.status(400).json({ error: 'That reset link is not valid. Request a new one.' });
+    }
+    if (typeof newPassword !== 'string' || newPassword.length === 0) {
+      return res.status(400).json({ error: 'Choose a new password.' });
+    }
+
+    const found = await pool.query(
+      `SELECT t.id AS token_id, u.id AS user_id, u.email, u.password
+         FROM password_reset_tokens t
+         JOIN users u ON u.id = t.user_id
+        WHERE t.token_hash = $1 AND t.used_at IS NULL AND t.expires_at > NOW()`,
+      [hashResetToken(token)]
+    );
+
+    if (found.rows.length === 0) {
+      return res.status(400).json({ error: 'That reset link has expired or was already used. Request a new one.' });
+    }
+
+    const row = found.rows[0];
+    const problems = validatePassword(newPassword, row.email);
+    if (await bcrypt.compare(newPassword, row.password)) {
+      problems.push('Choose a password that is different from your old one.');
+    }
+    if (problems.length > 0) {
+      return res.status(400).json({ error: problems[0], problems });
+    }
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, row.user_id]);
+      // Every outstanding link for this account dies with the one just used.
+      await client.query('UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE user_id = $1 AND used_at IS NULL', [row.user_id]);
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+
+    clearAccountFailures(String(row.email || '').toLowerCase());
+    res.json({ success: true, message: 'Password updated. Sign in with your new password.' });
+  } catch (err) {
+    serverError(res, 'POST /auth/reset-password', err);
   }
 });
 
@@ -2061,6 +2194,19 @@ const PORT = process.env.PORT || 3000;
 // Fresh installs get this table from schema.sql; this keeps an existing database
 // working after the rate build-up was added.
 async function ensureSchema() {
+  // First, so a failure in any later upgrade cannot leave account recovery missing.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash VARCHAR(64) NOT NULL UNIQUE,
+      expires_at TIMESTAMP NOT NULL,
+      used_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  await pool.query('CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id, created_at DESC)');
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS project_material_rates (
       id SERIAL PRIMARY KEY,
@@ -2125,6 +2271,9 @@ async function ensureSchema() {
 app.listen(PORT, () => {
   console.log(`🚀 SiteTrackerPro v3.0 Enhanced Backend running on port ${PORT}`);
   console.log('🔐 CORS allowed origins:', ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : 'none (same-origin only)');
+  console.log('✉️  Password reset email delivery:', emailDeliveryChannel() === 'log'
+    ? 'not configured - links are written to this log (set RESEND_API_KEY or SENDGRID_API_KEY to email them)'
+    : 'via ' + emailDeliveryChannel());
   console.log('✅ Features: BIM Integration, Fraud Detection, Quantity Survey, Cut & Fill, 3D Viewer Ready');
 
   ensureSchema()

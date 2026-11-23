@@ -36,6 +36,20 @@ export default function SiteTrackerPro() {
   const [projectsError, setProjectsError] = useState('');
   const [sessionExpired, setSessionExpired] = useState(false);
 
+  // A reset link opens the app as /?reset=<token>. That screen comes first, even
+  // when an old session is still stored, so the link always does what it says.
+  const [resetToken, setResetToken] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('reset') || '';
+  });
+  const [resetNotice, setResetNotice] = useState('');
+
+  const finishReset = (notice = '') => {
+    window.history.replaceState({}, '', window.location.pathname);
+    setResetToken('');
+    setResetNotice(notice);
+  };
+
   useEffect(() => {
     if (token) {
       fetchProjects();
@@ -77,8 +91,18 @@ export default function SiteTrackerPro() {
     }
   };
 
+  if (resetToken) {
+    return <ResetPasswordScreen token={resetToken} onDone={finishReset} />;
+  }
+
   if (!token) {
-    return <AuthScreen setToken={(nextToken) => { setSessionExpired(false); setToken(nextToken); }} sessionExpired={sessionExpired} />;
+    return (
+      <AuthScreen
+        setToken={(nextToken) => { setSessionExpired(false); setResetNotice(''); setToken(nextToken); }}
+        sessionExpired={sessionExpired}
+        notice={resetNotice}
+      />
+    );
   }
 
   const activeProject = selectedProject || projects[0] || null;
@@ -131,7 +155,7 @@ export default function SiteTrackerPro() {
 }
 
 // ===================== AUTHENTICATION SCREEN =====================
-function AuthScreen({ setToken, sessionExpired = false }) {
+function AuthScreen({ setToken, sessionExpired = false, notice = '' }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -139,6 +163,9 @@ function AuthScreen({ setToken, sessionExpired = false }) {
   const [isLogin, setIsLogin] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [forgot, setForgot] = useState(false);
+  const [resetMessage, setResetMessage] = useState('');
+  const [resetDelivery, setResetDelivery] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -166,6 +193,98 @@ function AuthScreen({ setToken, sessionExpired = false }) {
       setBusy(false);
     }
   };
+
+  // Sends the reset link. The reply is the same whether or not the address has an
+  // account, so this form cannot be used to discover who is registered.
+  const handleForgot = async (e) => {
+    e.preventDefault();
+    setError('');
+    setResetMessage('');
+    setBusy(true);
+    try {
+      const response = await axios.post(`${API_URL}/auth/forgot-password`, { email: email.trim() });
+      setResetMessage(response.data?.message || 'If that email address has an account, a reset link is on its way.');
+      setResetDelivery(response.data?.delivery || '');
+    } catch (err) {
+      const data = err.response?.data;
+      setError(data?.error || 'Could not send the reset link. Check the connection and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Where to look for the link when mail could not be sent from this deployment.
+  const deliveryHint = (delivery) => {
+    if (delivery === 'log' || delivery === 'failed') {
+      return 'Email sending is not set up on this server, so the link was written to its log. ' +
+        'Open the service in Render, choose Logs, and copy the line that starts with [password-reset]. ' +
+        'It expires in one hour.';
+    }
+    return 'The link works once and expires in one hour. If it has not arrived in a few minutes, check your spam folder.';
+  };
+
+  if (forgot) {
+    return (
+      <div className="auth auth-single">
+        <section className="auth-panel">
+          <div className="auth-form">
+            <Brand size={42} />
+            <h2>Reset your password</h2>
+            <p className="auth-form-sub">
+              {resetMessage
+                ? 'If that address has an account, a link is on its way.'
+                : 'Enter the email address you sign in with and we will send a link to choose a new password.'}
+            </p>
+
+            {resetMessage ? (
+              <>
+                <div className="section-note" role="status" style={{ marginBottom: 14 }}>
+                  <Icon name="key" size={13} /> {deliveryHint(resetDelivery)}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary auth-submit"
+                  onClick={() => { setForgot(false); setResetMessage(''); setResetDelivery(''); }}
+                >
+                  Back to sign in
+                </button>
+              </>
+            ) : (
+              <form onSubmit={handleForgot} className="auth-fields">
+                <div className="field">
+                  <label htmlFor="forgot-email">Work email</label>
+                  <input
+                    id="forgot-email"
+                    className="input"
+                    type="email"
+                    placeholder="you@company.com"
+                    name="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    required
+                  />
+                </div>
+
+                {error && <div className="auth-error" role="alert">{error}</div>}
+
+                <button type="submit" className="btn btn-primary auth-submit" disabled={busy}>
+                  {busy ? 'Sending…' : 'Send reset link'}
+                  {!busy && <Icon name="arrowRight" size={14} />}
+                </button>
+              </form>
+            )}
+
+            {!resetMessage && (
+              <div className="auth-switch">
+                <button onClick={() => { setForgot(false); setError(''); }}>Back to sign in</button>
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="auth">
@@ -198,6 +317,12 @@ function AuthScreen({ setToken, sessionExpired = false }) {
           <p className="auth-form-sub">
             {isLogin ? 'Sign in to the operating picture.' : 'Start with a project, then bring your field data into context.'}
           </p>
+
+          {notice && !error && (
+            <div className="section-note" style={{ background: 'var(--amber-soft)', borderColor: '#e8d4ae', color: '#7b4a0d' }} role="status">
+              <Icon name="key" size={13} /> {notice}
+            </div>
+          )}
 
           {sessionExpired && !error && (
             <div className="section-note" style={{ background: 'var(--amber-soft)', borderColor: '#e8d4ae', color: '#7b4a0d' }} role="status">
@@ -285,7 +410,139 @@ function AuthScreen({ setToken, sessionExpired = false }) {
             </button>
           </div>
 
+          {isLogin && (
+            <div className="auth-switch" style={{ marginTop: 6 }}>
+              <button onClick={() => { setForgot(true); setError(''); }}>Forgot your password?</button>
+            </div>
+          )}
+
           <p className="auth-legal">Access is logged. Survey observations and commercial records remain the authoritative source.</p>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+// ===================== RESET PASSWORD (EMAILED LINK) =====================
+// Opened from the link in the reset email: /?reset=<token>. The server decides
+// whether the token is still good; this screen collects the new password and
+// mirrors the rules so the person sees a problem before the request is sent.
+function ResetPasswordScreen({ token, onDone }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [problems, setProblems] = useState([]);
+  const [success, setSuccess] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setProblems([]);
+
+    const localProblems = [];
+    if (Array.from(password).length < 12) localProblems.push('Use at least 12 characters.');
+    if (password !== confirm) localProblems.push('The two passwords do not match.');
+    if (localProblems.length > 0) {
+      setProblems(localProblems);
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const response = await axios.post(`${API_URL}/auth/reset-password`, { token, newPassword: password });
+      setSuccess(response.data?.message || 'Password updated. Sign in with your new password.');
+      setPassword('');
+      setConfirm('');
+    } catch (err) {
+      const data = err.response?.data;
+      setProblems(
+        Array.isArray(data?.problems) && data.problems.length > 0
+          ? data.problems
+          : [data?.error || 'Could not set the new password. The link may have expired - request a new one.']
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="auth auth-single">
+      <section className="auth-panel">
+        <div className="auth-form">
+          <Brand size={42} />
+          <h2>{success ? 'Password set' : 'Choose a new password'}</h2>
+          <p className="auth-form-sub">
+            {success
+              ? 'You can now sign in with the password you just chose.'
+              : 'This link works once. Pick something you do not use anywhere else.'}
+          </p>
+
+          {success ? (
+            <>
+              <div className="section-note" role="status" style={{ marginBottom: 14 }}>
+                <Icon name="key" size={13} /> {success}
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary auth-submit"
+                onClick={() => onDone('Your password was updated. Sign in with the new one.')}
+              >
+                Back to sign in
+              </button>
+            </>
+          ) : (
+            <form onSubmit={handleSubmit} className="auth-fields">
+              <div className="field">
+                <label htmlFor="reset-password">New password</label>
+                <input
+                  id="reset-password"
+                  className="input"
+                  type="password"
+                  placeholder="••••••••••••"
+                  autoComplete="new-password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  minLength={12}
+                  maxLength={72}
+                  required
+                />
+                <span style={{ color: 'var(--ink-3)', fontSize: 9.5, lineHeight: 1.4 }}>
+                  At least 12 characters. Avoid your email, common passwords or repeated characters.
+                </span>
+              </div>
+              <div className="field">
+                <label htmlFor="reset-confirm">Confirm new password</label>
+                <input
+                  id="reset-confirm"
+                  className="input"
+                  type="password"
+                  placeholder="••••••••••••"
+                  autoComplete="new-password"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  minLength={12}
+                  maxLength={72}
+                  required
+                />
+              </div>
+
+              {problems.length > 0 && (
+                <div className="auth-error" role="alert">
+                  {problems.length === 1 ? problems[0] : problems.join(' ')}
+                </div>
+              )}
+
+              <button type="submit" className="btn btn-primary auth-submit" disabled={busy}>
+                {busy ? 'Saving…' : 'Set new password'}
+                {!busy && <Icon name="arrowRight" size={14} />}
+              </button>
+            </form>
+          )}
+
+          {!success && (
+            <div className="auth-switch">
+              <button onClick={() => onDone('')}>Back to sign in</button>
+            </div>
+          )}
         </div>
       </section>
     </div>
