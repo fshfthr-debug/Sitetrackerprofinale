@@ -1,3 +1,8 @@
 backend/basemaps/*.json
 backend/basemaps/*.json.gz
+
+# ...except the compressed Addis extract. It is only 1.8 MB and the deployed image
+# serves it directly, so the hosted app has a basemap without running the build
+# script on the server.
+!backend/basemaps/addis-osm.json.gz
 __pycache__/
