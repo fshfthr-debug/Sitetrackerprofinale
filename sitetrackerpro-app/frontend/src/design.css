@@ -1505,7 +1505,12 @@ code, kbd, samp {
     linear-gradient(145deg, #202924, #101412 75%);
 }
 
-.auth-single .auth-panel { padding: 0; background: transparent; }
+/* The sign-in screen takes its identity from the dark brand column. This one-column
+   layout has no such column, so the wordmark is shown inside the card whatever the
+   width. The panel's mobile min-height is also dropped: combined with the padding
+   on the shell it made a page that fits scroll by a few pixels. */
+.auth-single .auth-panel { min-height: 0; padding: 0; background: transparent; }
+.auth-single .auth-form .brand { display: flex; }
 
 .auth-switch { margin-top: 18px; color: var(--ink-3); font-size: 10.5px; text-align: center; }
 .auth-switch button { color: var(--copper); font-weight: 600; background: none; border: 0; }
