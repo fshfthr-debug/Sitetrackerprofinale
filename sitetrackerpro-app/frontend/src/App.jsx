@@ -149,6 +149,7 @@ export default function SiteTrackerPro() {
       {currentScreen === 'gis' && <GisWorkspace token={token} projects={projects} />}
       {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} />}
       {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} />}
+      {currentScreen === 'team' && <TeamScreen token={token} />}
       {currentScreen === 'account' && <AccountScreen token={token} />}
     </AppShell>
   );
@@ -552,6 +553,225 @@ function ResetPasswordScreen({ token, onDone }) {
 // ===================== ACCOUNT / CHANGE PASSWORD =====================
 // Rotating your own password. The server enforces the same rules; the checks here
 // exist so the person sees the problem before the request is sent.
+// ===================== TEAM & ACCESS =====================
+// Administrators assign one of three roles per account. This screen is a thin client over
+// GET /api/users and PATCH /api/users/:id/role; the API is what actually enforces them.
+const ROLE_CHOICES = [
+  { value: 'viewer', label: 'Viewer', hint: 'Reads every project record, changes nothing.' },
+  { value: 'analyst', label: 'Analyst', hint: 'Adds and edits project data, runs analysis and imports.' },
+  { value: 'admin', label: 'Admin', hint: 'Also deletes records and manages team access.' }
+];
+
+function TeamScreen({ token }) {
+  const [users, setUsers] = useState([]);
+  const [me, setMe] = useState(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [savingId, setSavingId] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const headers = { Authorization: `Bearer ${token}` };
+
+    (async () => {
+      try {
+        const [meResponse, usersResponse] = await Promise.all([
+          axios.get(`${API_URL}/auth/me`, { headers }),
+          axios.get(`${API_URL}/api/users`, { headers })
+        ]);
+        if (cancelled) return;
+        setMe(meResponse.data);
+        setUsers(usersResponse.data);
+      } catch (err) {
+        if (cancelled) return;
+        setError(err.response?.status === 403
+          ? 'Team access is limited to administrators. Everything else in SiteTrackerPro still works for your account.'
+          : (err.response?.data?.error || 'Could not load the team. Check your connection and try again.'));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [token]);
+
+  const assign = async (user, role) => {
+    setError('');
+    setNotice('');
+    setSavingId(user.id);
+    try {
+      const response = await axios.patch(
+        `${API_URL}/api/users/${user.id}/role`,
+        { role },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const updated = response.data.user;
+      setUsers(list => list.map(item => (item.id === updated.id ? { ...item, ...updated } : item)));
+      const label = (ROLE_CHOICES.find(choice => choice.value === role) || ROLE_CHOICES[0]).label;
+      setNotice(`${updated.full_name || updated.email} is now ${label}.`);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not change that role. Please try again.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div className="page-head-copy">
+          <div className="eyebrow">Workspace / access control</div>
+          <h1 className="page-title">Team &amp; access</h1>
+          <p className="page-sub">
+            One role per account. Viewers read every record, analysts add and edit project data,
+            admins also delete records and assign roles. The API refuses anything the role does
+            not allow, whatever the screen offers.
+          </p>
+        </div>
+      </div>
+
+      {error && (
+        <div role="alert" style={teamStyles.error}>{error}</div>
+      )}
+      {notice && <div style={teamStyles.notice}>{notice}</div>}
+      {loading && <p style={teamStyles.helper}>Loading accounts…</p>}
+
+      {!loading && users.length > 0 && (
+        <div style={teamStyles.card}>
+          <div style={teamStyles.headRow}>
+            <span>Account</span>
+            <span>Projects</span>
+            <span>Role</span>
+          </div>
+          {users.map(user => {
+            const isMe = me && me.id === user.id;
+            const saving = savingId === user.id;
+            return (
+              <div key={user.id} style={teamStyles.row}>
+                <div style={{ minWidth: 0 }}>
+                  <strong style={teamStyles.name}>
+                    {user.full_name || user.email.split('@')[0]}
+                    {isMe && <span style={teamStyles.you}>you</span>}
+                  </strong>
+                  <span style={teamStyles.email}>{user.email}</span>
+                  {user.company && <span style={teamStyles.email}>{user.company}</span>}
+                </div>
+                <div style={teamStyles.count}>{user.project_count}</div>
+                <div>
+                  <select
+                    aria-label={`Role for ${user.email}`}
+                    value={user.role}
+                    disabled={isMe || saving}
+                    onChange={event => assign(user, event.target.value)}
+                    style={teamStyles.select}
+                  >
+                    {ROLE_CHOICES.map(choice => (
+                      <option key={choice.value} value={choice.value}>{choice.label}</option>
+                    ))}
+                  </select>
+                  <span style={teamStyles.hint}>
+                    {isMe
+                      ? 'Your own role cannot be changed here.'
+                      : (ROLE_CHOICES.find(choice => choice.value === user.role) || ROLE_CHOICES[0]).hint}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!loading && !error && users.length === 0 && (
+        <p style={teamStyles.helper}>No accounts yet.</p>
+      )}
+
+      <div style={teamStyles.legend}>
+        {ROLE_CHOICES.map(choice => (
+          <div key={choice.value} style={teamStyles.legendItem}>
+            <strong>{choice.label}</strong>
+            <span>{choice.hint}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const teamStyles = {
+  card: {
+    background: 'var(--surface)',
+    border: '1px solid var(--line)',
+    borderRadius: 'var(--radius-md)',
+    boxShadow: 'var(--shadow-xs)',
+    overflow: 'hidden'
+  },
+  headRow: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) 90px minmax(200px, 260px)',
+    gap: '12px',
+    padding: '10px 16px',
+    background: 'var(--surface-2)',
+    borderBottom: '1px solid var(--line)',
+    fontSize: '10px',
+    fontWeight: 600,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    color: 'var(--ink-3)'
+  },
+  row: {
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) 90px minmax(200px, 260px)',
+    gap: '12px',
+    alignItems: 'center',
+    padding: '14px 16px',
+    borderTop: '1px solid var(--line)'
+  },
+  name: { display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '13px' },
+  you: {
+    fontSize: '9px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    background: 'var(--copper-soft)',
+    color: 'var(--copper-strong)',
+    borderRadius: '4px',
+    padding: '1px 5px'
+  },
+  email: { display: 'block', fontSize: '10.5px', color: 'var(--ink-3)', marginTop: '2px' },
+  count: { fontSize: '12px', fontVariantNumeric: 'tabular-nums', color: 'var(--ink-2)' },
+  select: {
+    width: '100%',
+    padding: '7px 9px',
+    border: '1px solid var(--line-strong)',
+    borderRadius: '7px',
+    background: 'var(--surface)',
+    color: 'var(--ink)',
+    fontSize: '11.5px'
+  },
+  hint: { display: 'block', fontSize: '9.5px', color: 'var(--ink-3)', marginTop: '5px', lineHeight: 1.4 },
+  helper: { fontSize: '11px', color: 'var(--ink-3)' },
+  error: {
+    background: 'var(--danger-soft)',
+    border: '1px solid #ecc9c4',
+    color: 'var(--danger)',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    fontSize: '11.5px',
+    marginBottom: '12px'
+  },
+  notice: {
+    background: 'var(--signal-soft)',
+    border: '1px solid #bcdccd',
+    color: 'var(--signal-strong)',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    fontSize: '11.5px',
+    marginBottom: '12px'
+  },
+  legend: { display: 'grid', gap: '8px', marginTop: '16px' },
+  legendItem: { display: 'flex', gap: '10px', alignItems: 'baseline', fontSize: '10.5px', color: 'var(--ink-3)' }
+};
+
 function AccountScreen({ token }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');

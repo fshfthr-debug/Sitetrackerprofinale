@@ -8,6 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
   password VARCHAR(255) NOT NULL,
   full_name VARCHAR(255),
   company VARCHAR(255),
+  -- viewer reads, analyst edits project data, admin also deletes and manages accounts.
+  -- Enforced by verifyToken() in the backend; see ensureSchema() for the migration.
+  role VARCHAR(20) NOT NULL DEFAULT 'viewer',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -332,6 +335,43 @@ CREATE TABLE IF NOT EXISTS gis_saved_queries (
 
 CREATE INDEX IF NOT EXISTS idx_gis_datasets_project ON gis_datasets(project_id);
 CREATE INDEX IF NOT EXISTS idx_gis_saved_queries_project ON gis_saved_queries(project_id);
+-- ==================== DEM / TERRAIN SURVEYS ====================
+-- Metadata only. The GeoTIFF itself lives on the uploads volume; no raster bytes in JSONB.
+CREATE TABLE IF NOT EXISTS terrain_surveys (
+  id SERIAL PRIMARY KEY,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  original_name VARCHAR(255) NOT NULL,
+  storage_key VARCHAR(512) NOT NULL,
+  preview_key VARCHAR(512),
+  file_bytes BIGINT,
+  sha256 VARCHAR(64),
+  crs VARCHAR(40),
+  epsg INTEGER,
+  vertical_datum VARCHAR(80),
+  width INTEGER,
+  height INTEGER,
+  pixel_size_x NUMERIC(18,10),
+  pixel_size_y NUMERIC(18,10),
+  bounds JSONB,
+  band_count INTEGER,
+  data_type VARCHAR(40),
+  no_data_value DOUBLE PRECISION,
+  z_min DOUBLE PRECISION,
+  z_max DOUBLE PRECISION,
+  z_mean DOUBLE PRECISION,
+  preview_width INTEGER,
+  preview_height INTEGER,
+  status VARCHAR(20) NOT NULL DEFAULT 'processing',
+  error_message TEXT,
+  source VARCHAR(120),
+  licence VARCHAR(120),
+  attribution TEXT,
+  processing_history JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_terrain_project ON terrain_surveys(project_id);
+
 -- Saved GIS workspaces (map views) and their ordered layer stacks. Additive: no changes to other modules.
 CREATE TABLE IF NOT EXISTS gis_projects (
   id SERIAL PRIMARY KEY,
@@ -378,42 +418,6 @@ CREATE INDEX IF NOT EXISTS idx_gis_annotations_workspace ON gis_annotations(gis_
 
 CREATE INDEX IF NOT EXISTS idx_gis_cache_expiry ON gis_osm_cache(expires_at);
 
--- ==================== DEM / TERRAIN SURVEYS ====================
--- Metadata only. The GeoTIFF itself lives on the uploads volume; no raster bytes in JSONB.
-CREATE TABLE IF NOT EXISTS terrain_surveys (
-  id SERIAL PRIMARY KEY,
-  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-  original_name VARCHAR(255) NOT NULL,
-  storage_key VARCHAR(512) NOT NULL,
-  preview_key VARCHAR(512),
-  file_bytes BIGINT,
-  sha256 VARCHAR(64),
-  crs VARCHAR(40),
-  epsg INTEGER,
-  vertical_datum VARCHAR(80),
-  width INTEGER,
-  height INTEGER,
-  pixel_size_x NUMERIC(18,10),
-  pixel_size_y NUMERIC(18,10),
-  bounds JSONB,
-  band_count INTEGER,
-  data_type VARCHAR(40),
-  no_data_value DOUBLE PRECISION,
-  z_min DOUBLE PRECISION,
-  z_max DOUBLE PRECISION,
-  z_mean DOUBLE PRECISION,
-  preview_width INTEGER,
-  preview_height INTEGER,
-  status VARCHAR(20) NOT NULL DEFAULT 'processing',
-  error_message TEXT,
-  source VARCHAR(120),
-  licence VARCHAR(120),
-  attribution TEXT,
-  processing_history JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_terrain_project ON terrain_surveys(project_id);
 
 -- ==================== SEED DATA: ETHIOPIAN MATERIALS ====================
 

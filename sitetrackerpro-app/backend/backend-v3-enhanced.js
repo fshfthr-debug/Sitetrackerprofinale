@@ -656,14 +656,16 @@ app.post('/auth/register', registerLimiter, async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // No role is passed: the column defaults to 'viewer', so a public sign-up can look
+    // around but cannot change data until an administrator promotes the account.
     const result = await pool.query(
-      'INSERT INTO users (email, password, full_name, company) VALUES ($1, $2, $3, $4) RETURNING id, email',
+      'INSERT INTO users (email, password, full_name, company) VALUES ($1, $2, $3, $4) RETURNING id, email, role',
       [cleanEmail, hashedPassword, fullName, company]
     );
 
     const token = jwt.sign({ userId: result.rows[0].id }, JWT_SECRET, { expiresIn: '7d' });
 
-    res.json({ success: true, token, user: result.rows[0] });
+    res.json({ success: true, token, user: { ...result.rows[0], role: normaliseRole(result.rows[0].role) } });
   } catch (err) {
     // 23505 = unique violation, i.e. the email is taken. Everything else is ours.
     if (err.code === '23505') {
@@ -713,25 +715,175 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
 
-    res.json({ success: true, token, user: { id: user.id, email: user.email, fullName: user.full_name } });
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, email: user.email, fullName: user.full_name, role: normaliseRole(user.role) }
+    });
   } catch (err) {
     serverError(res, 'POST /auth/login', err);
   }
 });
 
-// Middleware to verify JWT
-function verifyToken(req, res, next) {
+// ==================== ROLES ====================
+// One role per account, ranked. The rank decides which HTTP methods a role may use,
+// which is what makes the rule hold for all 85 routes without an annotation on each:
+//   viewer  - GET/HEAD only (reads everything, changes nothing)
+//   analyst - POST/PUT/PATCH (adds and edits project data, imports, analysis)
+//   admin   - also DELETE, plus account and role management
+const ROLES = ['viewer', 'analyst', 'admin'];
+const ROLE_RANK = { viewer: 1, analyst: 2, admin: 3 };
+const ROLE_LABELS = { viewer: 'Viewer', analyst: 'Analyst', admin: 'Admin' };
+
+// An unknown or null role is the least privilege, never the most. A schema problem must
+// not quietly grant access.
+function normaliseRole(value) {
+  return ROLES.includes(value) ? value : 'viewer';
+}
+
+// Signed-in actions that are not project edits: any account may do these.
+const SELF_SERVICE_PATHS = new Set(['/auth/change-password', '/api/ai/chat']);
+
+function requiredRoleFor(req) {
+  if (SELF_SERVICE_PATHS.has(req.path)) return 'viewer';
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return 'viewer';
+  if (req.method === 'DELETE') return 'admin';
+  return 'analyst';
+}
+
+// Middleware to verify JWT and enforce the account's role.
+//
+// The role is read from the database on every request rather than trusted from the
+// token: a token lasts seven days, and a demotion has to take effect immediately.
+async function verifyToken(req, res, next) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return res.status(401).json({ error: 'No token' });
-  
+
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
+    const result = await pool.query('SELECT role FROM users WHERE id = $1', [decoded.userId]);
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid token' });
+
+    const role = normaliseRole(result.rows[0].role);
+    const needed = requiredRoleFor(req);
+    if (ROLE_RANK[role] < ROLE_RANK[needed]) {
+      return res.status(403).json({
+        error: 'Your ' + ROLE_LABELS[role].toLowerCase() + ' access does not allow this action. ' +
+          'Ask an administrator for ' + ROLE_LABELS[needed].toLowerCase() + ' access.',
+        code: 'insufficient_role',
+        role,
+        requiredRole: needed
+      });
+    }
+
     req.userId = decoded.userId;
+    req.userRole = role;
     next();
   } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
+    if (err && (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError' || err.name === 'NotBeforeError')) {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    // 42703 = the role column is not there yet. This happens during the deploy that adds
+    // it, and on a database restored from a pre-roles backup. Treat those accounts as
+    // admins (the pre-roles behaviour) rather than locking everybody out until the
+    // migration on the next boot finishes.
+    if (err && err.code === '42703') {
+      console.warn('[' + new Date().toISOString() + '] users.role is missing; treating this request as admin until ensureSchema() finishes.');
+      req.userId = req.userId || null;
+      req.userRole = 'admin';
+      return next();
+    }
+    serverError(res, req.method + ' ' + req.path, err);
   }
 }
+
+// Account management is not a project edit: a role can never be "earned" by using the API.
+function requireAdmin(req, res, next) {
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({
+      error: 'Only an administrator can manage team access.',
+      code: 'insufficient_role',
+      role: req.userRole,
+      requiredRole: 'admin'
+    });
+  }
+  next();
+}
+
+// ==================== TEAM ACCESS ====================
+// Who am I, and what may I do? Used by the interface to show or hide an action before
+// the request is attempted - the API is what actually refuses it.
+app.get('/auth/me', verifyToken, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT id, email, full_name, company, role FROM users WHERE id = $1',
+      [req.userId]
+    );
+    if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid token' });
+
+    const user = result.rows[0];
+    res.json({
+      id: user.id,
+      email: user.email,
+      fullName: user.full_name,
+      company: user.company,
+      role: normaliseRole(user.role)
+    });
+  } catch (err) {
+    serverError(res, 'GET /auth/me', err);
+  }
+});
+
+app.get('/api/users', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT u.id, u.email, u.full_name, u.company, u.role, u.created_at,
+             (SELECT COUNT(*)::int FROM projects p WHERE p.user_id = u.id) AS project_count
+        FROM users u
+       ORDER BY u.id ASC
+    `);
+    res.json(result.rows.map(row => ({ ...row, role: normaliseRole(row.role) })));
+  } catch (err) {
+    serverError(res, 'GET /api/users', err);
+  }
+});
+
+app.patch('/api/users/:id/role', verifyToken, requireAdmin, async (req, res) => {
+  try {
+    const userId = Number.parseInt(req.params.id, 10);
+    const role = String((req.body && req.body.role) || '').toLowerCase();
+
+    if (!Number.isInteger(userId)) return res.status(400).json({ error: 'Unknown account.' });
+    if (!ROLES.includes(role)) return res.status(400).json({ error: 'Choose Admin, Analyst or Viewer.' });
+
+    // Changing your own role risks locking the last administrator out of the deployment.
+    if (userId === req.userId) {
+      return res.status(400).json({ error: 'You cannot change your own role. Ask another administrator.' });
+    }
+
+    const target = await pool.query('SELECT id, email, role FROM users WHERE id = $1', [userId]);
+    if (target.rows.length === 0) return res.status(404).json({ error: 'Account not found.' });
+
+    if (normaliseRole(target.rows[0].role) === 'admin' && role !== 'admin') {
+      const admins = await pool.query("SELECT COUNT(*)::int AS count FROM users WHERE role = 'admin'");
+      if (admins.rows[0].count <= 1) {
+        return res.status(400).json({ error: 'This is the only administrator account. Give another account admin access first.' });
+      }
+    }
+
+    const updated = await pool.query(
+      'UPDATE users SET role = $1 WHERE id = $2 RETURNING id, email, full_name, company, role, created_at',
+      [role, userId]
+    );
+
+    console.log('[' + new Date().toISOString() + '] Role change: user ' + userId + ' (' +
+      updated.rows[0].email + ') is now ' + role + ', by user ' + req.userId);
+
+    res.json({ success: true, user: { ...updated.rows[0], role: normaliseRole(updated.rows[0].role) } });
+  } catch (err) {
+    serverError(res, 'PATCH /api/users/:id/role', err);
+  }
+});
 
 // Hosted Site AI. The provider key and prompt stay on the server; the browser
 // calls this authenticated route after the local Site AI cannot answer.
@@ -2206,7 +2358,25 @@ const PORT = process.env.PORT || 3000;
 // Fresh installs get this table from schema.sql; this keeps an existing database
 // working after the rate build-up was added.
 async function ensureSchema() {
-  // First, so a failure in any later upgrade cannot leave account recovery missing.
+  // Roles, added after the first release. The column is created nullable, every existing
+  // account is promoted to admin, and only then does the default become 'viewer':
+  // otherwise the person deploying this would silently lose access to their own data.
+  const usersTable = await pool.query("SELECT to_regclass('public.users') AS oid");
+  if (usersTable.rows[0].oid) {
+    await pool.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(20)');
+    await pool.query("UPDATE users SET role = 'admin' WHERE role IS NULL");
+    await pool.query("ALTER TABLE users ALTER COLUMN role SET DEFAULT 'viewer'");
+    await pool.query('ALTER TABLE users ALTER COLUMN role SET NOT NULL');
+    // A database that somehow holds no admin gets its oldest account promoted, so the
+    // deployment can always be administered.
+    await pool.query(`
+      UPDATE users SET role = 'admin'
+       WHERE id = (SELECT MIN(id) FROM users)
+         AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'admin')
+    `);
+  }
+
+  // Next, so a failure in any later upgrade cannot leave account recovery missing.
   await pool.query(`
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
       id SERIAL PRIMARY KEY,
