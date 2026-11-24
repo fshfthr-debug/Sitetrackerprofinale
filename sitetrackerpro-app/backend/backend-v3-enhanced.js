@@ -28,6 +28,16 @@ const app = express();
 // Applied to every response, including the built frontend the API serves.
 app.disable('x-powered-by');
 
+// Public raster tile hosts used by the basemap switcher (see frontend/src/gis/basemaps.js).
+// Keep the two lists in step: a host missing here fails silently as a blank map.
+const TILE_HOSTS = [
+  'https://tile.openstreetmap.org',
+  'https://*.tile.openstreetmap.org',
+  'https://server.arcgisonline.com',
+  'https://*.tile.opentopomap.org',
+  'https://basemaps.cartocdn.com'
+];
+
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -37,12 +47,14 @@ app.use(helmet({
       // web-ifc instantiates its WebAssembly geometry engine in the browser. This
       // permits WASM compilation only; it does not enable eval() for JavaScript.
       scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
-      connectSrc: ["'self'", 'data:', 'blob:'],
+      // Raster basemaps pull tiles from public tile services, so those hosts must be
+      // allowed here and in imgSrc. Without them the browser silently drops every tile.
+      connectSrc: ["'self'", 'data:', 'blob:', ...TILE_HOSTS],
       // MapLibre creates its workers from blob: URLs.
       workerSrc: ["'self'", "blob:"],
       childSrc: ["'self'", "blob:"],
       // Sprites and generated previews are local or data: URLs.
-      imgSrc: ["'self'", "data:", "blob:"],
+      imgSrc: ["'self'", "data:", "blob:", ...TILE_HOSTS],
       // The app is never embedded in another page.
       frameAncestors: ["'none'"],
       // Switched off deliberately: on a plain-HTTP deployment (no domain yet) this
