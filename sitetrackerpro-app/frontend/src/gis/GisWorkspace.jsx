@@ -10,7 +10,18 @@ import MapPrintLayout, { niceDistance, formatDistance } from './MapPrintLayout';
 import EthiopiaCoveragePanel from './EthiopiaCoveragePanel';
 import Icon from '../ui/Icon';
 import { DEFAULT_CENTER, SITE_ATTRIBUTION, addPlaceLabels, basemapStyle } from './basemap';
-import { BASEMAP_CHOICES, DEFAULT_BASEMAP } from './basemaps';
+import { DEFAULT_BASEMAP, maptilerStyleUrl } from './basemaps';
+import { loadMapConfig } from './mapConfig';
+import { ToolDock, ContextToolbar } from './ToolDock';
+import StatusBar from './StatusBar';
+import CutFillPanel from './CutFillPanel';
+import ClashPanel from './ClashPanel';
+import {
+  consumePendingGisCommand,
+  getWorkspaceSettings,
+  subscribeGisCommands,
+  subscribeWorkspaceSettings
+} from '../shell/workspaceSettings';
 import Popup from '../ui/Popup';
 import ETHIOPIA_BOUNDARIES from './ethiopia-regions.json';
 import {
@@ -178,6 +189,7 @@ export default function GisWorkspace({ token, projects }) {
   const [styleVersion, setStyleVersion] = useState(0);
   const [basemapError, setBasemapError] = useState(false);
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP);
+  const [mapKey, setMapKey] = useState('');
   const [localBasemap, setLocalBasemap] = useState(null);
   const [selected, setSelected] = useState(null);
   const [savingView, setSavingView] = useState(false);
@@ -219,6 +231,27 @@ export default function GisWorkspace({ token, projects }) {
   const [mapQuery, setMapQuery] = useState('');
   const [mapSearchOpen, setMapSearchOpen] = useState(false);
 
+  // ---- Workstation state (tool dock, glass panels, sketch, analysis) ----
+  const [activeTool, setActiveTool] = useState('select');
+  // Map clicks belong to the active drawing tool, so national coverage
+  // features must not intercept them.
+  const activeToolRef = useRef('select');
+  const [leftOpen, setLeftOpen] = useState(true);
+  const [inspectorOpen, setInspectorOpen] = useState(true);
+  const [measureMode, setMeasureMode] = useState('distance');
+  const [drawMode, setDrawMode] = useState('polygon');
+  const [units, setUnits] = useState('metric');
+  const [snap, setSnap] = useState(true);
+  const [sketch, setSketch] = useState([]);
+  const [sketchResult, setSketchResult] = useState('');
+  const [cutFillOpen, setCutFillOpen] = useState(false);
+  const [cutFillPolygon, setCutFillPolygon] = useState(null);
+  const [clashResult, setClashResult] = useState(null);
+  const [clashSeed, setClashSeed] = useState(0);
+  const [zoom, setZoom] = useState(11);
+  const [theme, setTheme] = useState(() => getWorkspaceSettings().gisTheme);
+  const [elevation, setElevation] = useState(null);
+
   // Ethiopia coverage tools
   const [ethiopiaOpen, setEthiopiaOpen] = useState(false);
   const [ethiopiaLayers, setEthiopiaLayers] = useState({ boundaries: true, labels: true, coverage: true });
@@ -230,6 +263,17 @@ export default function GisWorkspace({ token, projects }) {
     const onResize = () => setNarrow(window.innerWidth < 900);
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  // The MapTiler key arrives from the server at runtime. Until it does, the raster fallback
+  // (CARTO / Esri) is what renders, so the map is never blank and never depends on OSM tiles.
+  useEffect(() => {
+    let cancelled = false;
+    loadMapConfig().then(config => {
+      if (cancelled) return;
+      setMapKey((config.maptiler && config.maptiler.key) || '');
+    });
+    return () => { cancelled = true; };
   }, []);
 
   const mapContainer = useRef(null);
@@ -245,8 +289,11 @@ export default function GisWorkspace({ token, projects }) {
   const annotationMarkersRef = useRef([]);
   const featureLabelMarkersRef = useRef([]);
   const annotationModeRef = useRef(false);
+  useEffect(() => { activeToolRef.current = activeTool; }, [activeTool]);
   const createAnnotationRef = useRef(null);
   const fileInputRef = useRef(null);
+  const terrainGridRef = useRef(null);
+  const finishSketchRef = useRef(null);
 
   const authHeaders = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
@@ -334,9 +381,10 @@ export default function GisWorkspace({ token, projects }) {
     if (basemapId === 'local' && localBasemap) {
       markersRef.current = addPlaceLabels(map, localBasemap);
     }
-    map.setStyle(basemapStyle(localBasemap, basemapId));
+    // Vector style when the server has a MapTiler key; raster fallback otherwise.
+    map.setStyle(maptilerStyleUrl(basemapId, mapKey) || basemapStyle(localBasemap, basemapId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [basemapId, localBasemap, mapReady]);
+  }, [basemapId, localBasemap, mapReady, mapKey]);
 
   // ---------------------------------------------------------------------------
   // Ethiopia coverage. Boundaries and labels survive basemap swaps because the
@@ -389,12 +437,20 @@ export default function GisWorkspace({ token, projects }) {
     }, beforeId);
 
     const onClick = event => {
+      if (['measure', 'draw', 'cut-fill'].includes(activeToolRef.current)) return;
+      // A project layer feature under the pointer owns the click.
+      const onProjectLayer = map.queryRenderedFeatures(event.point)
+        .some(f => String(f.layer && f.layer.id).startsWith('gislayer-'));
+      if (onProjectLayer) return;
       const feature = event.features && event.features[0];
       const name = feature && feature.properties ? feature.properties.name : '';
       if (!name) return;
       setRegionRecord({ name, projects: geoCoverage.byRegion[name] || [] });
     };
-    const onEnter = () => { map.getCanvas().style.cursor = 'pointer'; };
+    const onEnter = () => {
+      if (['measure', 'draw', 'cut-fill'].includes(activeToolRef.current)) return;
+      map.getCanvas().style.cursor = 'pointer';
+    };
     const onLeave = () => { if (!annotationModeRef.current) map.getCanvas().style.cursor = ''; };
 
     map.on('click', 'ethiopia-fill', onClick);
@@ -1304,9 +1360,6 @@ export default function GisWorkspace({ token, projects }) {
     Object.entries(payloads).forEach(([layerId, payload]) => { fields[layerId] = labelFieldsFor(payload); });
     return fields;
   }, [payloads]);
-  const gridStyle = narrow
-    ? { ...styles.grid, gridTemplateColumns: 'minmax(0, 1fr)' }
-    : styles.grid;
   const readyTerrains = terrains.filter(item => item.status === 'ready');
   const layers = useMemo(() => workspace?.layers || [], [workspace]);
 
@@ -1452,47 +1505,470 @@ export default function GisWorkspace({ token, projects }) {
       : { key, direction: 'asc' });
   };
 
+
+  // =========================================================================
+  // Workstation logic
+  // =========================================================================
+
+  const formatLength = value => {
+    if (!Number.isFinite(value)) return '—';
+    if (units === 'imperial') return `${(value * 3.28084).toFixed(1)} ft`;
+    return value >= 1000 ? `${(value / 1000).toFixed(3)} km` : `${value.toFixed(1)} m`;
+  };
+
+  const formatSurface = value => {
+    if (!Number.isFinite(value)) return '—';
+    if (units === 'imperial') return `${(value / 4046.8564224).toFixed(2)} acre`;
+    return value >= 10000 ? `${(value / 10000).toFixed(2)} ha` : `${value.toFixed(0)} m²`;
+  };
+
+  const haversineMetres = (a, b) => {
+    const R = 6371008.8;
+    const rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad;
+    const dLng = (b.lng - a.lng) * rad;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  };
+
+  const sketchLength = useMemo(
+    () => sketch.reduce((sum, point, index) => (index === 0 ? 0 : sum + haversineMetres(sketch[index - 1], point)), 0),
+    [sketch]
+  );
+
+  const sketchArea = useMemo(() => {
+    if (sketch.length < 3) return 0;
+    try {
+      const zone = Math.floor((sketch[0].lng + 180) / 6) + 1;
+      const def = `+proj=utm +zone=${zone} +datum=WGS84 +units=m +no_defs`;
+      const xy = sketch.map(point => proj4('+proj=longlat +datum=WGS84 +no_defs', def, [point.lng, point.lat]));
+      let sum = 0;
+      for (let i = 0, j = xy.length - 1; i < xy.length; j = i, i += 1) {
+        sum += xy[j][0] * xy[i][1] - xy[i][0] * xy[j][1];
+      }
+      return Math.abs(sum / 2);
+    } catch (err) {
+      return 0;
+    }
+  }, [sketch]);
+
+  const sketchClosed = (activeTool === 'draw' && drawMode === 'polygon')
+    || activeTool === 'cut-fill'
+    || (activeTool === 'measure' && measureMode === 'area');
+
+  const sketchReadout = useMemo(() => {
+    if (sketch.length === 0) return null;
+    if (activeTool === 'measure') {
+      return measureMode === 'area'
+        ? `${formatSurface(sketchArea)} · perimeter ${formatLength(sketchLength)}`
+        : `${formatLength(sketchLength)} · ${sketch.length} pt${sketch.length === 1 ? '' : 's'}`;
+    }
+    if (activeTool === 'cut-fill') return `${sketch.length} vertices · ${formatSurface(sketchArea)}`;
+    if (activeTool === 'draw') {
+      return drawMode === 'point' ? `${sketch.length} point${sketch.length === 1 ? '' : 's'}` : `${formatSurface(sketchArea)} · ${formatLength(sketchLength)}`;
+    }
+    if (activeTool === 'clash') return clashResult ? `${clashResult.clashCount} conflicts` : 'Run a check in the inspector';
+    return null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, measureMode, drawMode, sketch, sketchArea, sketchLength, units, clashResult]);
+
+  const clearSketch = () => {
+    setSketch([]);
+    setSketchResult('');
+  };
+
+  const finishSketch = () => {
+    if (sketch.length < 2) { setNotice('Add at least two points on the map first.'); return; }
+    if (activeTool === 'cut-fill') {
+      if (sketch.length < 3) { setError('A volume polygon needs at least three vertices.'); return; }
+      const ring = [...sketch.map(point => [point.lng, point.lat]), [sketch[0].lng, sketch[0].lat]];
+      setCutFillPolygon({ type: 'Polygon', coordinates: [ring] });
+      setCutFillOpen(true);
+      setInspectorOpen(true);
+      setNotice(`Design polygon captured · ${formatSurface(sketchArea)}. Set the design surface in the panel.`);
+      return;
+    }
+    if (activeTool === 'draw') {
+      setSketchResult(drawMode === 'point' ? `${sketch.length} point${sketch.length === 1 ? '' : 's'} captured` : `Area ${formatSurface(sketchArea)} · perimeter ${formatLength(sketchLength)}`);
+      return;
+    }
+    if (activeTool === 'measure') {
+      setSketchResult(measureMode === 'area'
+        ? `Area ${formatSurface(sketchArea)} · perimeter ${formatLength(sketchLength)}`
+        : `Distance ${formatLength(sketchLength)}`);
+    }
+  };
+  finishSketchRef.current = finishSketch;
+
+  // Sketch geometry on the map: one source, three layers, updated in place.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    const coords = sketch.map(point => [point.lng, point.lat]);
+    const closedRing = sketchClosed && coords.length >= 3 ? [...coords, coords[0]] : null;
+    const features = [];
+    if (coords.length >= 2) {
+      features.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: closedRing || coords } });
+    }
+    if (closedRing) {
+      features.push({ type: 'Feature', properties: {}, geometry: { type: 'Polygon', coordinates: [closedRing] } });
+    }
+    coords.forEach(coordinate => {
+      features.push({ type: 'Feature', properties: {}, geometry: { type: 'Point', coordinates: coordinate } });
+    });
+
+    const data = { type: 'FeatureCollection', features };
+    const existing = map.getSource('stp-sketch');
+    if (existing) { existing.setData(data); return; }
+    if (features.length === 0) return;
+
+    map.addSource('stp-sketch', { type: 'geojson', data });
+    map.addLayer({
+      id: 'stp-sketch-fill', type: 'fill', source: 'stp-sketch',
+      filter: ['==', ['geometry-type'], 'Polygon'],
+      paint: { 'fill-color': '#f59e0b', 'fill-opacity': 0.16 }
+    });
+    map.addLayer({
+      id: 'stp-sketch-line', type: 'line', source: 'stp-sketch',
+      filter: ['==', ['geometry-type'], 'LineString'],
+      paint: { 'line-color': '#fbbf24', 'line-width': 2, 'line-dasharray': [2, 1.5] }
+    });
+    map.addLayer({
+      id: 'stp-sketch-points', type: 'circle', source: 'stp-sketch',
+      filter: ['==', ['geometry-type'], 'Point'],
+      paint: { 'circle-radius': 4.5, 'circle-color': '#fbbf24', 'circle-stroke-color': '#111827', 'circle-stroke-width': 1.2 }
+    });
+  }, [sketch, sketchClosed, mapReady, styleVersion]);
+
+  // Click to place vertices, double-click to finish. The click handler is only bound for tools
+  // that draw, so feature selection still works with Select.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return undefined;
+    const drawing = activeTool === 'measure' || activeTool === 'draw' || activeTool === 'cut-fill';
+    map.getCanvas().style.cursor = drawing ? 'crosshair' : '';
+    if (!drawing) {
+      map.doubleClickZoom.enable();
+      return undefined;
+    }
+    map.doubleClickZoom.disable();
+    const onClick = event => setSketch(points => [...points, { lng: event.lngLat.lng, lat: event.lngLat.lat }]);
+    const onDouble = event => {
+      event.preventDefault();
+      finishSketchRef.current?.();
+    };
+    map.on('click', onClick);
+    map.on('dblclick', onDouble);
+    return () => {
+      map.off('click', onClick);
+      map.off('dblclick', onDouble);
+      map.doubleClickZoom.enable();
+    };
+  }, [activeTool, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return undefined;
+    const onZoom = () => setZoom(map.getZoom());
+    map.on('zoom', onZoom);
+    setZoom(map.getZoom());
+    return () => map.off('zoom', onZoom);
+  }, [mapReady]);
+
+  // Clash warning zones: a pulsing danger layer above the project layers.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return undefined;
+    const remove = () => {
+      ['clash-fill', 'clash-line', 'clash-points'].forEach(id => { if (map.getLayer(id)) map.removeLayer(id); });
+      if (map.getSource('stp-clash')) map.removeSource('stp-clash');
+    };
+    const features = (clashResult?.clashes || [])
+      .filter(clash => clash.geometry)
+      .map(clash => ({
+        type: 'Feature',
+        properties: { severity: clash.severity, label: clash.layerLabel },
+        geometry: clash.geometry
+      }));
+    if (features.length === 0) { remove(); return undefined; }
+
+    const data = { type: 'FeatureCollection', features };
+    if (map.getSource('stp-clash')) {
+      map.getSource('stp-clash').setData(data);
+    } else {
+      map.addSource('stp-clash', { type: 'geojson', data });
+      map.addLayer({
+        id: 'clash-fill', type: 'fill', source: 'stp-clash',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': '#f97316', 'fill-opacity': 0.22 }
+      });
+      map.addLayer({
+        id: 'clash-line', type: 'line', source: 'stp-clash',
+        paint: { 'line-color': '#ef4444', 'line-width': 2 }
+      });
+      map.addLayer({
+        id: 'clash-points', type: 'circle', source: 'stp-clash',
+        filter: ['==', ['geometry-type'], 'Point'],
+        paint: { 'circle-radius': 7, 'circle-color': '#ef4444', 'circle-opacity': 0.85 }
+      });
+    }
+
+    let frame = 0;
+    const timer = window.setInterval(() => {
+      frame += 1;
+      const wave = (Math.sin(frame / 4) + 1) / 2;
+      if (map.getLayer('clash-line')) map.setPaintProperty('clash-line', 'line-width', 1.5 + wave * 2);
+      if (map.getLayer('clash-fill')) map.setPaintProperty('clash-fill', 'fill-opacity', 0.12 + wave * 0.16);
+    }, 140);
+
+    return () => { window.clearInterval(timer); remove(); };
+  }, [clashResult, mapReady, styleVersion]);
+
+  // Elevation for the telemetry bar, sampled from the first ready survey's preview grid.
+  useEffect(() => {
+    const ready = terrains.find(item => item.status === 'ready' && item.bounds && item.preview);
+    terrainGridRef.current = null;
+    if (!ready) return undefined;
+    let cancelled = false;
+    axios.get(`${API_URL}/api/terrain/${ready.projectId}/${ready.id}/preview.bin`, {
+      responseType: 'arraybuffer',
+      headers: authHeaders
+    }).then(response => {
+      if (cancelled) return;
+      const epsg = Number(String(ready.crs || '').replace(/[^0-9]/g, ''));
+      if (!Number.isFinite(epsg)) return;
+      const def = epsg === 4326
+        ? '+proj=longlat +datum=WGS84 +no_defs'
+        : `+proj=utm +zone=${epsg >= 32700 ? epsg - 32700 : epsg - 32600} ${epsg >= 32700 ? '+south' : ''} +datum=WGS84 +units=m +no_defs`;
+      terrainGridRef.current = {
+        grid: new Float32Array(response.data),
+        width: ready.preview.width,
+        height: ready.preview.height,
+        bounds: ready.bounds,
+        def
+      };
+    }).catch(() => { terrainGridRef.current = null; });
+    return () => { cancelled = true; };
+  }, [terrains, authHeaders]);
+
+  useEffect(() => {
+    const source = terrainGridRef.current;
+    if (!cursor || !source) { setElevation(null); return; }
+    try {
+      const [x, y] = proj4('+proj=longlat +datum=WGS84 +no_defs', source.def, [cursor.lng, cursor.lat]);
+      const fx = ((x - source.bounds[0]) / (source.bounds[2] - source.bounds[0])) * (source.width - 1);
+      const fy = ((source.bounds[3] - y) / (source.bounds[3] - source.bounds[1])) * (source.height - 1);
+      const x0 = Math.floor(fx);
+      const y0 = Math.floor(fy);
+      if (x0 < 0 || y0 < 0 || x0 >= source.width - 1 || y0 >= source.height - 1) { setElevation(null); return; }
+      const tx = fx - x0;
+      const ty = fy - y0;
+      const at = (cx, cy) => source.grid[cy * source.width + cx];
+      const values = [at(x0, y0), at(x0 + 1, y0), at(x0, y0 + 1), at(x0 + 1, y0 + 1)];
+      if (!values.every(Number.isFinite)) { setElevation(null); return; }
+      const top = values[0] * (1 - tx) + values[1] * tx;
+      const bottom = values[2] * (1 - tx) + values[3] * tx;
+      setElevation(top * (1 - ty) + bottom * ty);
+    } catch (err) {
+      setElevation(null);
+    }
+  }, [cursor]);
+
+  // ---- Commands from the top menu bar / mode tabs ----
+  const applyTool = (tool) => {
+    setActiveTool(tool);
+    setSketch([]);
+    setSketchResult('');
+    if (tool === 'cut-fill') { setDrawMode('polygon'); setCutFillOpen(true); }
+    if (tool === 'clash') { setInspectorOpen(true); }
+    if (tool === 'georef') { setView('georef'); setLeftOpen(true); }
+  };
+
+  const fitProject = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const boxes = [];
+    Object.values(payloads).forEach(payload => {
+      (payload?.geojson?.features || []).forEach(feature => {
+        if (feature.geometry) boxes.push(geometryBounds(feature.geometry));
+      });
+    });
+    if (boxes.length === 0) {
+      map.flyTo({ center: DEFAULT_CENTER, zoom: 11, duration: 800 });
+      return;
+    }
+    const west = Math.min(...boxes.map(box => box[0]));
+    const south = Math.min(...boxes.map(box => box[1]));
+    const east = Math.max(...boxes.map(box => box[2]));
+    const north = Math.max(...boxes.map(box => box[3]));
+    map.fitBounds([[west, south], [east, north]], {
+      padding: { top: 90, left: leftOpen ? 340 : 90, right: inspectorOpen ? 380 : 90, bottom: 70 },
+      duration: 900
+    });
+  };
+
+  const flyToClash = (clash) => {
+    const map = mapRef.current;
+    if (!map || !clash?.geometry) return;
+    const bounds = geometryBounds(clash.geometry);
+    map.flyTo({
+      center: [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2],
+      zoom: Math.max(map.getZoom(), 17),
+      duration: 900
+    });
+    setSelected({
+      geometryType: clash.geometry.type,
+      properties: {
+        conflict: clash.layerLabel,
+        against: clash.obstacleLabel,
+        rule: clash.severity === 'slope' ? `${clash.slopeDeg}° slope` : `${clash.distanceM} m clearance`,
+        severity: clash.severity
+      }
+    });
+  };
+
+  const handleCommand = (command) => {
+    if (!command) return;
+    if (command.startsWith('tool:')) {
+      const tool = command.slice(5);
+      if (tool === 'clash-slope') { setActiveTool('clash'); setInspectorOpen(true); setClashSeed(seed => seed + 1); return; }
+      applyTool(tool);
+      return;
+    }
+    if (command.startsWith('basemap:')) {
+      setBasemapId(command.slice(8));
+      return;
+    }
+    switch (command) {
+      case 'panel:layers':
+        setLeftOpen(value => !value);
+        break;
+      case 'panel:inspector':
+        setInspectorOpen(value => !value);
+        break;
+      case 'panel:import':
+        setLeftOpen(true);
+        setView('workspace');
+        setTimeout(() => document.getElementById('gis-import-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 140);
+        break;
+      case 'panel:analysis':
+        setLeftOpen(true);
+        setView('workspace');
+        setTimeout(() => document.getElementById('gis-analysis-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 140);
+        break;
+      case 'panel:table':
+        if (layers[0]) setTableLayerId(layers[0].id);
+        else setNotice('Load a workspace layer before opening the attribute table.');
+        break;
+      case 'panel:ethiopia':
+        setEthiopiaOpen(true);
+        break;
+      case 'panel:georef':
+        setView('georef');
+        setLeftOpen(true);
+        break;
+      case 'map:fit':
+        fitProject();
+        break;
+      case 'map:print':
+        openPrintLayout();
+        break;
+      case 'export:geojson':
+      case 'export:csv': {
+        const dataset = datasets.find(item => item.id === layers.find(layer => layer.kind === 'dataset')?.datasetId) || datasets[0];
+        if (dataset) exportDataset(dataset, command.endsWith('csv') ? 'csv' : 'geojson');
+        else setNotice('Add a dataset layer before exporting.');
+        break;
+      }
+      default:
+        break;
+    }
+  };
+  const commandHandlerRef = useRef(null);
+  commandHandlerRef.current = handleCommand;
+
+  useEffect(() => {
+    const unsubscribe = subscribeGisCommands(command => commandHandlerRef.current?.(command));
+    const pending = consumePendingGisCommand();
+    if (pending) window.setTimeout(() => commandHandlerRef.current?.(pending.command), 160);
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => subscribeWorkspaceSettings(state => {
+    if (state.gisTheme) setTheme(state.gisTheme);
+    if (state.basemap) setBasemapId(state.basemap);
+  }), []);
+
   return (
-    <div className="page gis-shell">
-      <div className="page-head">
-        <div className="page-head-copy">
-          <div className="eyebrow">Spatial operations / workspace</div>
-          <h1 className="page-title">Map intelligence</h1>
-          <p className="page-sub">
-            A map-first record of layers, terrain, survey control and georeferencing. Open the
-            Ethiopia panel for national regions, place search and portfolio coverage; survey
-            observations remain the measured record.
-          </p>
+    <div className="gis-studio" data-tool={activeTool} data-theme={theme}>
+      <div className="gis-studio-bar">
+        <div className="studio-project">
+          <Icon name="building" size={13} />
+          <label htmlFor="gis-project-select">Project</label>
+          <select
+            id="gis-project-select"
+            value={projectId}
+            onChange={event => setProjectId(event.target.value)}
+          >
+            <option value="">Select project</option>
+            {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
         </div>
-        <div className="page-actions">
-          <div className="gis-project">
-            <Icon name="building" size={13} />
-            <label htmlFor="gis-project-select">Project</label>
-            <select
-              id="gis-project-select"
-              value={projectId}
-              onChange={event => setProjectId(event.target.value)}
-            >
-              <option value="">Select project</option>
-              {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </div>
-        </div>
+
+        <span className="studio-context">
+          {project ? `${project.name}${workspace ? ` · ${workspace.name}` : ''} · ${layers.length} layer${layers.length === 1 ? '' : 's'} · ${workingCrs}` : 'Choose a project to open its map workspace'}
+        </span>
+
+        <span className="studio-spacer" />
+
+        <button type="button" className={`studio-btn${leftOpen ? ' active' : ''}`} onClick={() => setLeftOpen(value => !value)} title="Layer and asset tree">
+          <Icon name="layers" size={13} /> Layers
+        </button>
+        <button type="button" className={`studio-btn${inspectorOpen ? ' active' : ''}`} onClick={() => setInspectorOpen(value => !value)} title="Property and clash inspector">
+          <Icon name="panel" size={13} /> Inspector
+        </button>
+        <button type="button" className="studio-btn" onClick={fitProject} title="Fit project extent">
+          <Icon name="maximize" size={13} /> Fit
+        </button>
+        <button type="button" className="studio-btn" onClick={openPrintLayout} title="Print layout">
+          <Icon name="file" size={13} /> Print
+        </button>
+        <button type="button" className="studio-btn" onClick={saveView} disabled={savingView}>
+          {savingView ? 'Saving…' : 'Save view'}
+        </button>
+        <button type="button" className={`studio-btn${ethiopiaOpen ? ' active' : ''}`} onClick={() => setEthiopiaOpen(value => !value)}>
+          <Icon name="globe" size={13} /> Ethiopia
+        </button>
       </div>
 
-      {error && <div style={styles.error} role="alert">{error}</div>}
-      {notice && <div style={styles.notice}>{notice}</div>}
-      {busy && <div style={styles.notice}>{busy}</div>}
-      {basemapError && basemapId === 'local' && (
-        <div style={styles.error}>
-          No local basemap extract at <code>/basemaps/addis-osm.json</code>. Run
-          {' '}<code>node scripts/build-basemap.js</code> (or the PBF variant) and restart the backend,
-          or switch to Street, Satellite, Terrain or Dark GIS above the map.
-        </div>
-      )}
+      <div className="gis-stage">
+        {(error || notice || busy || (basemapError && basemapId === 'local')) && (
+          <div className="gis-toasts">
+            {error && (
+              <div className="gis-toast error" role="alert">
+                <Icon name="alert" size={13} /> <span>{error}</span>
+                <button type="button" onClick={() => setError('')} aria-label="Dismiss"><Icon name="x" size={11} /></button>
+              </div>
+            )}
+            {notice && (
+              <div className="gis-toast">
+                <Icon name="checkCircle" size={13} /> <span>{notice}</span>
+                <button type="button" onClick={() => setNotice('')} aria-label="Dismiss"><Icon name="x" size={11} /></button>
+              </div>
+            )}
+            {busy && <div className="gis-toast"><Icon name="clock" size={13} /> <span>{busy}</span></div>}
+            {basemapError && basemapId === 'local' && (
+              <div className="gis-toast error">
+                <Icon name="alert" size={13} /> <span>No local extract. Run <code>node scripts/build-basemap.js</code> or choose another basemap.</span>
+              </div>
+            )}
+          </div>
+        )}
 
-      <div className="gis-grid" style={gridStyle}>
-        <div className="gis-rail">
+        <div className={`gis-rail gis-glass${leftOpen ? '' : ' collapsed'}`}>
+          <button type="button" className="rail-toggle" onClick={() => setLeftOpen(value => !value)} aria-label="Toggle layer and asset tree">
+            <Icon name={leftOpen ? 'chevronLeft' : 'chevronRight'} size={12} />
+          </button>
           <div style={styles.card}>
             <h3 style={{ marginTop: 0 }}>Workspaces</h3>
             {!projectId ? (
@@ -2255,36 +2731,13 @@ export default function GisWorkspace({ token, projects }) {
                   </div>
                 )}
               </div>
-              <div className="map-basemaps" role="group" aria-label="Basemap">
-                {BASEMAP_CHOICES.map(choice => (
-                  <button
-                    key={choice.id}
-                    type="button"
-                    className={`map-basemap-btn${basemapId === choice.id ? ' active' : ''}`}
-                    aria-pressed={basemapId === choice.id}
-                    title={choice.attribution || choice.label}
-                    onClick={() => setBasemapId(choice.id)}
-                  >
-                    {choice.label}
-                  </button>
-                ))}
-              </div>
-              <button
-                type="button"
-                className={`map-basemap-btn map-eth-toggle${ethiopiaOpen ? ' active' : ''}`}
-                aria-pressed={ethiopiaOpen}
-                onClick={() => setEthiopiaOpen(value => !value)}
-                title="Ethiopia national coverage"
-              >
-                <Icon name="globe" size={12} /> Ethiopia
-              </button>
               <div className="map-badge secondary"><Icon name="layers" size={11} /> <strong>{layers.length}</strong> layers</div>
               <div className="map-badge"><Icon name="compass" size={11} /> <strong>{workingCrs}</strong></div>
             </div>
 
             <div
               ref={mapContainer}
-              style={{ ...styles.map, height: narrow ? '480px' : '660px', border: 0, borderRadius: 0 }}
+              style={{ ...styles.map, height: '100%', border: 0, borderRadius: 0 }}
             />
 
             <button className="icon-btn map-geolocate" onClick={locateMe} title="Locate field position" aria-label="Locate field position">
@@ -2386,7 +2839,94 @@ export default function GisWorkspace({ token, projects }) {
             </div>
           )}
         </div>
+
+        <aside className={`gis-inspector gis-glass${inspectorOpen ? '' : ' collapsed'}`}>
+          <button type="button" className="rail-toggle right" onClick={() => setInspectorOpen(value => !value)} aria-label="Toggle inspector">
+            <Icon name={inspectorOpen ? 'chevronRight' : 'chevronLeft'} size={12} />
+          </button>
+
+          <div className="inspector-section">
+            <div className="inspector-section-head">
+              <strong><Icon name="cursor" size={13} /> Feature record</strong>
+              {selected && (
+                <button type="button" className="icon-btn" onClick={() => setSelected(null)} aria-label="Clear selection">
+                  <Icon name="x" size={12} />
+                </button>
+              )}
+            </div>
+            {selected ? (
+              <>
+                <div className="inspector-kind">{selected.geometryType || 'Feature'}</div>
+                <table className="inspector-table">
+                  <tbody>
+                    {Object.entries(selected.properties || {})
+                      .filter(([, value]) => value !== null && value !== '')
+                      .slice(0, 16)
+                      .map(([key, value]) => (
+                        <tr key={key}>
+                          <td>{key}</td>
+                          <td>{String(value).slice(0, 140)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </>
+            ) : (
+              <p className="inspector-empty">Click a feature on the map with the Select tool to see its attributes here.</p>
+            )}
+          </div>
+
+          <ClashPanel
+            key={clashSeed}
+            token={token}
+            projectId={projectId}
+            datasets={datasets}
+            surveys={terrains}
+            result={clashResult}
+            onResult={setClashResult}
+            onFlyTo={flyToClash}
+            onClear={() => setClashResult(null)}
+          />
+        </aside>
       </div>
+
+      <StatusBar
+        cursor={cursor}
+        zoom={zoom}
+        elevation={elevation}
+        workingCrs={workingCrs}
+        layers={layers.length}
+        projectName={project?.name}
+        theme={theme}
+      />
+
+      <ToolDock activeTool={activeTool} onTool={applyTool} />
+      <ContextToolbar
+        activeTool={activeTool}
+        options={{ measureMode, drawMode, snap, units }}
+        onChange={patch => {
+          if (patch.measureMode) setMeasureMode(patch.measureMode);
+          if (patch.drawMode) setDrawMode(patch.drawMode);
+          if ('snap' in patch) setSnap(patch.snap);
+          if (patch.units) setUnits(patch.units);
+        }}
+        readout={sketchReadout || sketchResult}
+        onClear={clearSketch}
+        onFinish={finishSketch}
+        canFinish={sketch.length >= 2}
+      />
+
+      {cutFillOpen && (
+        <CutFillPanel
+          token={token}
+          projectId={projectId}
+          surveys={terrains}
+          polygon={cutFillPolygon}
+          onClose={() => setCutFillOpen(false)}
+          onDrawPolygon={() => { applyTool('cut-fill'); setCutFillOpen(true); }}
+          onClearPolygon={() => setCutFillPolygon(null)}
+        />
+      )}
 
       <Popup
         open={Boolean(regionRecord)}

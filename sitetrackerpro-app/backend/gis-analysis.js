@@ -20,6 +20,13 @@ const {
   crsDefinition,
   transformFeatureCollection
 } = require('./gis-crs');
+const {
+  detectClearanceClashes,
+  slopeGrid,
+  slopeHazards,
+  writeGeometry: geometryToGeoJson
+} = require('./clash');
+const { pixelSizesMetres } = require('./terrain');
 
 const OPERATIONS = new Set(['buffer', 'clip', 'intersect', 'dissolve', 'measure']);
 const MAX_INPUT_FEATURES = 3000;
@@ -118,6 +125,7 @@ module.exports = function createGisAnalysisModule({
   pool,
   verifyToken,
   requireProjectAccess,
+  uploadDir,
   serverError = (res, where, err) => {
     console.error(`${where} failed:`, err.message || err);
     if (!res.headersSent) res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
@@ -441,6 +449,207 @@ module.exports = function createGisAnalysisModule({
       outputFeatureCount: resultFeatures.length,
       metrics,
       dataset: datasetSummary(stored)
+    });
+  }));
+
+  // ---------------------------------------------------------------------------
+  // Clash and encroachment check.
+  //
+  // Clearance mode compares every feature of one dataset with every feature of another in a
+  // metre CRS and reports the pairs within the clearance distance. Slope mode samples the
+  // survey's preview DEM and flags features standing on terrain steeper than a threshold.
+  // Both return warning-zone geometries in EPSG:4326 for the map to highlight.
+  // ---------------------------------------------------------------------------
+  app.post('/api/projects/:id/analysis/clash-check', verifyToken, requireProjectAccess(req => req.params.id), asyncHandler(async (req, res) => {
+    const projectId = Number(req.projectId);
+    const layerId = Number(req.body.layerDatasetId);
+    if (!Number.isFinite(layerId)) {
+      return res.status(400).json({ error: 'layerDatasetId is required (the layer being checked).' });
+    }
+    const layer = await loadDataset(projectId, layerId);
+    if (!layer) return res.status(404).json({ error: 'Layer dataset not found for this project.' });
+
+    const slopeSurveyId = req.body.terrainSurveyId === undefined || req.body.terrainSurveyId === null || req.body.terrainSurveyId === ''
+      ? null
+      : Number(req.body.terrainSurveyId);
+
+    let workingCrs;
+    let clashInput;
+
+    if (slopeSurveyId !== null) {
+      // Slope hazards are measured on the DEM, so the working CRS is the survey's own CRS.
+      if (!Number.isFinite(slopeSurveyId)) return res.status(400).json({ error: 'terrainSurveyId must be a survey id.' });
+      const threshold = Number(req.body.slopeThresholdDegrees);
+      if (!Number.isFinite(threshold) || threshold <= 0 || threshold >= 90) {
+        return res.status(400).json({ error: 'slopeThresholdDegrees must be between 0 and 90.' });
+      }
+
+      const surveyResult = await pool.query(
+        'SELECT * FROM terrain_surveys WHERE id = $1 AND project_id = $2',
+        [slopeSurveyId, projectId]
+      );
+      const survey = surveyResult.rows[0];
+      if (!survey) return res.status(404).json({ error: 'Terrain survey not found for this project.' });
+      if (survey.status !== 'ready' || !survey.preview_key) {
+        return res.status(409).json({ error: `This survey is ${survey.status}.` });
+      }
+
+      const surveyCrs = crsDefinition(survey.crs);
+      if (!surveyCrs || surveyCrs.units !== 'metres') {
+        return res.status(400).json({ error: 'This survey is not in a metre CRS, so slope cannot be measured.' });
+      }
+      workingCrs = surveyCrs;
+
+      const previewPath = path.join(uploadDir || path.join(__dirname, 'uploads'), survey.preview_key);
+      let buffer;
+      try {
+        buffer = await fs.promises.readFile(previewPath);
+      } catch (err) {
+        return res.status(409).json({ error: 'The survey preview grid is not available on this server.' });
+      }
+      const width = Number(survey.preview_width);
+      const height = Number(survey.preview_height);
+      const grid = new Float32Array(width * height);
+      for (let i = 0; i < grid.length; i += 1) grid[i] = buffer.readFloatLE(i * 4);
+
+      const metres = pixelSizesMetres(
+        survey.bounds,
+        surveyCrs,
+        Number(survey.width),
+        Number(survey.height),
+        Number(survey.pixel_size_x),
+        Number(survey.pixel_size_y)
+      );
+      const dx = (metres.dx * Number(survey.width)) / width;
+      const dy = (metres.dy * Number(survey.height)) / height;
+      const slope = slopeGrid({ grid, width, height, dx, dy });
+
+      let features;
+      try {
+        features = readFeatures(layer, surveyCrs.code || survey.crs)
+          .map(item => ({ properties: item.properties, geometry: geometryToGeoJson(item.geometry) }))
+          .filter(item => item.geometry);
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+
+      let hazards;
+      try {
+        hazards = slopeHazards({
+          features,
+          crsBounds: survey.bounds,
+          slope,
+          width,
+          height,
+          thresholdDegrees: threshold
+        });
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+
+      clashInput = {
+        mode: 'slope',
+        threshold,
+        surveyId: survey.id,
+        clashes: hazards.clashes,
+        testedPairs: hazards.testedPairs,
+        truncated: hazards.truncated
+      };
+    } else {
+      const clearance = Number(req.body.clearanceMetres);
+      if (!Number.isFinite(clearance) || clearance < 0) {
+        return res.status(400).json({ error: 'clearanceMetres is required (0 or more metres).' });
+      }
+      const obstacleId = Number(req.body.obstacleDatasetId);
+      if (!Number.isFinite(obstacleId)) {
+        return res.status(400).json({ error: 'obstacleDatasetId is required (the corridor or asset layer).' });
+      }
+      const obstacle = await loadDataset(projectId, obstacleId);
+      if (!obstacle) return res.status(404).json({ error: 'Obstacle dataset not found for this project.' });
+
+      const crs = projectedCrs(req.body.crs || 'EPSG:32637');
+      if (crs.error) return res.status(400).json({ error: crs.error });
+      workingCrs = crs.definition;
+
+      let layerFeatures;
+      let obstacleFeatures;
+      try {
+        layerFeatures = readFeatures(layer, workingCrs.code).map(item => ({
+          properties: item.properties,
+          geometry: geometryToGeoJson(item.geometry)
+        })).filter(item => item.geometry);
+        obstacleFeatures = readFeatures(obstacle, workingCrs.code).map(item => ({
+          properties: item.properties,
+          geometry: geometryToGeoJson(item.geometry)
+        })).filter(item => item.geometry);
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+
+      let found;
+      try {
+        found = detectClearanceClashes({
+          layerFeatures,
+          obstacleFeatures,
+          clearanceMetres: clearance
+        });
+      } catch (err) {
+        return res.status(400).json({ error: err.message });
+      }
+
+      clashInput = {
+        mode: 'clearance',
+        clearance,
+        obstacleId: obstacle.id,
+        obstacleName: obstacle.name,
+        clashes: found.clashes,
+        testedPairs: found.testedPairs,
+        truncated: found.truncated
+      };
+    }
+
+    // Warning zones go back to WGS 84 so the map can render them without reprojecting.
+    let clashes = clashInput.clashes;
+    try {
+      const zones = clashes.filter(clash => clash.geometry).map(clash => ({
+        type: 'Feature',
+        properties: {
+          clash_id: clash.id,
+          severity: clash.severity,
+          layer_label: clash.layerLabel,
+          obstacle_label: clash.obstacleLabel,
+          distance_m: clash.distanceM,
+          slope_deg: clash.slopeDeg || null
+        },
+        geometry: clash.geometry
+      }));
+      if (zones.length > 0) {
+        const transformed = transformFeatureCollection(
+          { type: 'FeatureCollection', features: zones },
+          workingCrs.code,
+          'EPSG:4326'
+        );
+        const byId = new Map(transformed.features.map(feature => [feature.properties.clash_id, feature.geometry]));
+        clashes = clashes.map(clash => ({ ...clash, geometry: byId.get(clash.id) || null }));
+      }
+    } catch (err) {
+      return res.status(400).json({ error: `The clash zones could not be reprojected: ${err.message}` });
+    }
+
+    res.json({
+      mode: clashInput.mode,
+      crs: workingCrs.code,
+      clearanceMetres: clashInput.mode === 'clearance' ? clashInput.clearance : null,
+      slopeThresholdDegrees: clashInput.mode === 'slope' ? clashInput.threshold : null,
+      terrainSurveyId: clashInput.surveyId || null,
+      layer: { id: layer.id, name: layer.name },
+      obstacle: clashInput.obstacleId ? { id: clashInput.obstacleId, name: clashInput.obstacleName } : null,
+      clashCount: clashes.length,
+      testedPairs: clashInput.testedPairs,
+      truncated: Boolean(clashInput.truncated),
+      clashes,
+      checkedAt: new Date().toISOString(),
+      note: 'Clearance is measured edge to edge between features in ' + workingCrs.code + '. Slope is sampled from the survey preview grid, which is a visualisation aid; verify steep areas against the survey before acting.'
     });
   }));
 };

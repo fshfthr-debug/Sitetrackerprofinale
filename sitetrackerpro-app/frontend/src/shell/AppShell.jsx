@@ -4,6 +4,8 @@ import Icon from '../ui/Icon';
 import FeatureGuidePopup from '../ui/FeatureGuidePopup';
 import { answerQuestion } from '../ai/siteAi';
 import { buildHostedContext, conversationForModel, draftFromAnswer, shouldUseHostedAi } from '../ai/hosted';
+import CommandBar from './CommandBar';
+import { getWorkspaceSettings, updateWorkspaceSettings } from './workspaceSettings';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -73,36 +75,12 @@ export function Brand({ size = 40, withSub = true }) {
   );
 }
 
-function initials(name) {
-  return String(name || '')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map(part => part[0])
-    .join('')
-    .toUpperCase() || 'ST';
-}
-
 function compactMoney(value) {
   const amount = Number(value) || 0;
   if (amount >= 1e9) return `${(amount / 1e9).toFixed(1)}B`;
   if (amount >= 1e6) return `${(amount / 1e6).toFixed(1)}M`;
   if (amount >= 1e3) return `${(amount / 1e3).toFixed(0)}k`;
   return amount.toFixed(0);
-}
-
-function useOnlineStatus() {
-  const [online, setOnline] = useState(typeof navigator === 'undefined' ? true : navigator.onLine);
-  useEffect(() => {
-    const update = () => setOnline(navigator.onLine);
-    window.addEventListener('online', update);
-    window.addEventListener('offline', update);
-    return () => {
-      window.removeEventListener('online', update);
-      window.removeEventListener('offline', update);
-    };
-  }, []);
-  return online;
 }
 
 function CommandPalette({ open, onClose, currentScreen, projects, onNavigate, onSelectProject, onOpenAI }) {
@@ -481,6 +459,13 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
   );
 }
 
+const TAB_FOR_SCREEN = {
+  gis: 'map',
+  '3d-viewer': 'bim',
+  surveying: 'control',
+  team: 'reports'
+};
+
 export default function AppShell({
   children,
   currentScreen,
@@ -491,16 +476,19 @@ export default function AppShell({
   onSelectProject,
   onLogout
 }) {
-  const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
   const [guideTrigger, setGuideTrigger] = useState(0);
-  const online = useOnlineStatus();
+  const [theme, setTheme] = useState(() => getWorkspaceSettings().gisTheme);
+  const [activeTab, setActiveTab] = useState(() => TAB_FOR_SCREEN[currentScreen] || '');
   const meta = SCREEN_META[currentScreen] || SCREEN_META.dashboard;
 
+  // The theme is a document-level attribute so the map, glass panels and telemetry bar all
+  // re-style together, including the MapLibre controls.
   useEffect(() => {
-    setMobileOpen(false);
-  }, [currentScreen]);
+    document.documentElement.dataset.gisTheme = theme;
+    return () => { delete document.documentElement.dataset.gisTheme; };
+  }, [theme]);
 
   useEffect(() => {
     const onKey = event => {
@@ -522,14 +510,13 @@ export default function AppShell({
       if (event.key === 'Escape') {
         setCommandOpen(false);
         setAiOpen(false);
-        setMobileOpen(false);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const locked = commandOpen || aiOpen || mobileOpen;
+  const locked = commandOpen || aiOpen;
   useEffect(() => {
     if (!locked) return undefined;
     const previous = document.body.style.overflow;
@@ -537,11 +524,11 @@ export default function AppShell({
     return () => { document.body.style.overflow = previous; };
   }, [locked]);
 
-  const navigate = (screen) => {
+  const navigate = (screen, tabId) => {
     setCurrentScreen(screen);
+    setActiveTab(tabId || TAB_FOR_SCREEN[screen] || '');
     setCommandOpen(false);
     setAiOpen(false);
-    setMobileOpen(false);
   };
 
   const selectProject = (project) => {
@@ -549,118 +536,38 @@ export default function AppShell({
     navigate('project-details');
   };
 
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    updateWorkspaceSettings({ gisTheme: next });
+    // Keep the basemap in step unless the operator chose imagery on purpose.
+    const current = getWorkspaceSettings().basemap;
+    if (['dark', 'light', 'street'].includes(current)) {
+      updateWorkspaceSettings({ basemap: next === 'dark' ? 'dark' : 'street' });
+    }
+  };
+
   return (
-    <div className="app-shell">
-      {mobileOpen && <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} />}
-      <aside className={`sidebar ${mobileOpen ? 'open' : ''}`}>
-        <button onClick={() => navigate('dashboard')} style={{ background: 'none', border: 0, padding: 0, textAlign: 'left' }} aria-label="SiteTrackerPro home">
-          <Brand />
-        </button>
+    <div className="app-shell app-shell--command">
+      <CommandBar
+        token={token}
+        currentScreen={currentScreen}
+        navigate={navigate}
+        meta={meta}
+        navSections={NAV_SECTIONS}
+        projects={projects}
+        activeProject={activeProject}
+        onSelectProject={selectProject}
+        onLogout={onLogout}
+        onOpenCommand={() => setCommandOpen(true)}
+        onOpenAI={() => setAiOpen(true)}
+        onOpenGuide={() => setGuideTrigger(value => value + 1)}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        activeTab={activeTab}
+      />
 
-        <div className="workspace-switch">
-          <div className="workspace-switch-label">
-            Active project
-            <Icon name="chevronDown" size={12} className="workspace-switch-chevron" />
-          </div>
-          <select
-            value={activeProject?.id || ''}
-            onChange={event => {
-              const project = projects.find(item => String(item.id) === event.target.value);
-              if (project) selectProject(project);
-            }}
-            aria-label="Active project"
-          >
-            <option value="">Portfolio · all projects</option>
-            {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
-        </div>
-
-        <nav className="nav" aria-label="Primary navigation">
-          {NAV_SECTIONS.map(section => (
-            <div className="nav-group" key={section.label}>
-              <div className="nav-label">{section.label}</div>
-              {section.items.map(item => (
-                <button
-                  key={item.id}
-                  className={`nav-item ${currentScreen === item.id ? 'active' : ''}`}
-                  onClick={() => navigate(item.id)}
-                  aria-current={currentScreen === item.id ? 'page' : undefined}
-                >
-                  <Icon name={item.icon} size={15} className="nav-icon" />
-                  {item.label}
-                  {item.id === 'fraud' && Number(0) > 0 && <span className="nav-badge">0</span>}
-                </button>
-              ))}
-            </div>
-          ))}
-        </nav>
-
-        <div className="sidebar-footer">
-          <button className="nav-item" onClick={() => navigate('new-project')} style={{ marginBottom: 8 }}>
-            <Icon name="plus" size={15} className="nav-icon" />
-            New project
-          </button>
-          <div className="sidebar-user">
-            <div className="sidebar-avatar">{initials(activeProject?.name || 'Site Tracker')}</div>
-            <div style={{ minWidth: 0 }}>
-              <div className="sidebar-user-name">{activeProject?.name || 'Portfolio workspace'}</div>
-              <div className="sidebar-user-role">{online ? 'Connected · live records' : 'Offline · local session'}</div>
-            </div>
-            <button className="sidebar-logout" onClick={onLogout} aria-label="Log out" title="Log out">
-              <Icon name="logout" size={14} />
-            </button>
-          </div>
-        </div>
-      </aside>
-
-      <div className="app-body">
-        <header className="topbar">
-          <button className="icon-btn mobile-menu-btn" onClick={() => setMobileOpen(true)} aria-label="Open navigation">
-            <Icon name="menu" />
-          </button>
-
-          <div className="topbar-breadcrumb">
-            <span className="crumb-parent">{meta.section}</span>
-            <span className="sep">/</span>
-            <strong>{meta.label}</strong>
-          </div>
-
-          <div className="topbar-spacer" />
-
-          <button className="search-trigger" onClick={() => setCommandOpen(true)} aria-label="Open command palette">
-            <Icon name="search" size={14} />
-            Search or jump to…
-            <kbd>⌘K</kbd>
-          </button>
-
-          <div className="topbar-status" title={online ? 'Connected to the workspace' : 'No network connection'}>
-            <span className={`status-dot ${online ? '' : 'offline'}`} />
-            {online ? 'Live' : 'Offline'}
-          </div>
-
-          <button className="icon-btn" onClick={() => setCommandOpen(true)} aria-label="Search" title="Search (Cmd K)">
-            <Icon name="search" size={17} />
-          </button>
-
-          <button
-            className="icon-btn"
-            onClick={() => setGuideTrigger(value => value + 1)}
-            aria-label="Open the feature guide for this screen"
-            title="Feature guide (?)"
-          >
-            <Icon name="help" size={17} />
-          </button>
-
-          <button className="ai-trigger" onClick={() => setAiOpen(true)} title="Site AI (Cmd J)">
-            <Icon name="sparkles" size={15} className="spark" />
-            <span className="ai-text">Site AI</span>
-          </button>
-
-          <div className="topbar-avatar" title="Workspace operator">{initials(activeProject?.name || 'Operator')}</div>
-        </header>
-
-        <main className="app-main">{children}</main>
-      </div>
+      <main className={`app-main${currentScreen === 'gis' ? ' app-main--gis' : ''}`}>{children}</main>
 
       <nav className="mobile-bottom" aria-label="Field navigation">
         {[

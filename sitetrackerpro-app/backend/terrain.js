@@ -22,6 +22,7 @@ const multer = require('multer');
 const { PNG } = require('pngjs');
 const proj4 = require('proj4');
 const { fromFile } = require('geotiff');
+const { polygonsFrom, anyPolygonContains, polygonArea, computeCutFill } = require('./cut-fill');
 
 // ---------------------------------------------------------------------------
 // Limits. Everything a request can cost is bounded.
@@ -905,6 +906,236 @@ module.exports = function createTerrainModule({
         spread: Number((Math.max(...differences) - Math.min(...differences)).toFixed(3))
       } : null,
       note: 'Reported for engineering review only. The DEM and the benchmarks have not been adjusted.'
+    });
+  }));
+
+  // -------------------------------------------------------------------------
+  // Cut and fill. The polygon is reprojected into the survey's projected CRS, every DEM cell
+  // whose centre falls inside it is sampled from the stored GeoTIFF (not the preview grid), and
+  // the volume is summed per cell. A design elevation or a comparison DEM supplies the design
+  // surface; a comparison DEM must share the survey CRS.
+  // -------------------------------------------------------------------------
+  const MAX_CUTFILL_CELLS = Number(process.env.CUTFILL_MAX_CELLS || 2000000);
+
+  const clampIndex = (value, max) => Math.max(0, Math.min(max, value));
+
+  async function readGridWindow(storageKey, window, width, height, resampleMethod) {
+    const tiff = await fromFile(storage.absolute(storageKey));
+    const image = await tiff.getImage();
+    const rasters = await image.readRasters({
+      window,
+      width,
+      height,
+      samples: [0],
+      interleave: false,
+      resampleMethod
+    });
+    return rasters[0];
+  }
+
+  app.post('/api/projects/:id/terrain/cut-fill', verifyToken, requireProjectAccess(req => req.params.id), asyncHandler(async (req, res) => {
+    const projectId = Number(req.projectId);
+    const surveyId = Number(req.body.surveyId);
+    if (!Number.isFinite(surveyId)) {
+      return res.status(400).json({ error: 'surveyId is required (the DEM to measure against).' });
+    }
+
+    const survey = await loadSurvey(projectId, surveyId);
+    if (!survey) return res.status(404).json({ error: 'Terrain survey not found for this project.' });
+    if (survey.status !== 'ready') {
+      return res.status(409).json({ error: `This survey is ${survey.status}: ${survey.error_message || 'not processed yet'}` });
+    }
+    const surveyCrs = crsDefinition(survey.epsg);
+    if (!surveyCrs) return res.status(400).json({ error: 'This survey has no supported CRS to measure in.' });
+
+    const polygons = polygonsFrom(req.body.polygon);
+    if (polygons.length === 0) {
+      return res.status(400).json({ error: 'polygon is required: a GeoJSON Polygon or MultiPolygon (a Feature is accepted).' });
+    }
+
+    // The polygon may arrive in WGS 84 (the map's coordinates) or already in the survey CRS.
+    const inputCode = String(req.body.crs || 'EPSG:4326').replace(/^EPSG:/i, '');
+    const inputCrs = crsDefinition(Number(inputCode));
+    if (!inputCrs) {
+      return res.status(400).json({ error: `Unsupported polygon CRS EPSG:${inputCode}. ${SUPPORTED_CRS_NOTE}` });
+    }
+
+    const projectPoint = ([x, y]) => {
+      if (inputCrs.epsg === surveyCrs.epsg) return [Number(x), Number(y)];
+      const from = inputCrs.epsg === 4326 ? '+proj=longlat +datum=WGS84 +no_defs' : inputCrs.def;
+      const result = proj4(from, surveyCrs.def, [Number(x), Number(y)]);
+      return [Number(result[0]), Number(result[1])];
+    };
+
+    let projectedPolygons;
+    try {
+      projectedPolygons = polygons.map(polygon => polygon.map(ring => ring.map(projectPoint)));
+    } catch (err) {
+      return res.status(400).json({ error: `The polygon could not be reprojected: ${err.message}` });
+    }
+    if (projectedPolygons.some(polygon => polygon.some(ring => ring.some(pair => !pair.every(Number.isFinite))))) {
+      return res.status(400).json({ error: 'The polygon has coordinates that do not transform into the survey CRS.' });
+    }
+
+    const inPolygonAreaM2 = projectedPolygons.reduce((sum, polygon) => sum + polygonArea(polygon), 0);
+    if (!(inPolygonAreaM2 > 0)) {
+      return res.status(400).json({ error: 'The polygon encloses no area in the survey CRS.' });
+    }
+
+    // Design surface: a constant elevation, or a second DEM sampled on the same grid.
+    const hasTarget = req.body.targetElevation !== undefined && req.body.targetElevation !== null && req.body.targetElevation !== '';
+    const targetElevation = hasTarget ? Number(req.body.targetElevation) : null;
+    if (hasTarget && !Number.isFinite(targetElevation)) {
+      return res.status(400).json({ error: 'targetElevation must be a number of metres above the vertical datum.' });
+    }
+
+    const baselineId = req.body.baselineSurveyId === undefined || req.body.baselineSurveyId === null || req.body.baselineSurveyId === ''
+      ? null
+      : Number(req.body.baselineSurveyId);
+    if (!hasTarget && baselineId === null) {
+      return res.status(400).json({ error: 'Provide targetElevation (m) or baselineSurveyId (a comparison DEM).' });
+    }
+
+    let baseline = null;
+    if (baselineId !== null) {
+      if (!Number.isFinite(baselineId)) return res.status(400).json({ error: 'baselineSurveyId must be a survey id.' });
+      baseline = await loadSurvey(projectId, baselineId);
+      if (!baseline) return res.status(404).json({ error: 'The comparison survey was not found for this project.' });
+      if (baseline.status !== 'ready') return res.status(409).json({ error: 'The comparison survey is not ready.' });
+      if (Number(baseline.epsg) !== Number(survey.epsg)) {
+        return res.status(400).json({ error: 'The comparison survey must be in the same CRS as the measured survey (reproject it first).' });
+      }
+    }
+
+    const bounds = survey.bounds;
+    if (!Array.isArray(bounds) || bounds.length !== 4) {
+      return res.status(409).json({ error: 'This survey has no usable bounds.' });
+    }
+    const pixelX = Math.abs(toNum(survey.pixel_size_x));
+    const pixelY = Math.abs(toNum(survey.pixel_size_y));
+    if (!(pixelX > 0) || !(pixelY > 0) || !survey.width || !survey.height) {
+      return res.status(409).json({ error: 'This survey has no usable grid geometry.' });
+    }
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    projectedPolygons.forEach(polygon => polygon.forEach(ring => ring.forEach(([x, y]) => {
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    })));
+
+    if (maxX <= bounds[0] || minX >= bounds[2] || maxY <= bounds[1] || minY >= bounds[3]) {
+      return res.status(400).json({ error: 'The polygon is outside this survey, so there is no elevation to measure.' });
+    }
+
+    const col0 = clampIndex(Math.floor((Math.max(minX, bounds[0]) - bounds[0]) / pixelX), survey.width);
+    const col1 = clampIndex(Math.ceil((Math.min(maxX, bounds[2]) - bounds[0]) / pixelX), survey.width);
+    const row0 = clampIndex(Math.floor((bounds[3] - Math.min(maxY, bounds[3])) / pixelY), survey.height);
+    const row1 = clampIndex(Math.ceil((bounds[3] - Math.max(minY, bounds[1])) / pixelY), survey.height);
+    if (col1 - col0 < 1 || row1 - row0 < 1) {
+      return res.status(400).json({ error: 'The polygon covers less than one DEM cell; it is too small to measure.' });
+    }
+
+    const cols = col1 - col0;
+    const rows = row1 - row0;
+    const readBounds = [bounds[0] + col0 * pixelX, bounds[3] - row1 * pixelY, bounds[0] + col1 * pixelX, bounds[3] - row0 * pixelY];
+    const totalCells = cols * rows;
+    const factor = Math.min(1, Math.sqrt(MAX_CUTFILL_CELLS / Math.max(1, totalCells)));
+    const readWidth = Math.max(2, Math.round(cols * factor));
+    const readHeight = Math.max(2, Math.round(rows * factor));
+    const sampled = readWidth !== cols || readHeight !== rows;
+
+    let band;
+    try {
+      band = await readGridWindow(survey.storage_key, [col0, row0, col1, row1], readWidth, readHeight, sampled ? 'bilinear' : 'nearest');
+    } catch (err) {
+      return res.status(422).json({ error: `The DEM could not be sampled: ${err.message}` });
+    }
+
+    let designBand = null;
+    if (baseline) {
+      const baseX = Math.abs(toNum(baseline.pixel_size_x));
+      const baseY = Math.abs(toNum(baseline.pixel_size_y));
+      const baseBounds = baseline.bounds;
+      if (!Array.isArray(baseBounds) || !(baseX > 0) || !(baseY > 0)) {
+        return res.status(409).json({ error: 'The comparison survey has no usable grid geometry.' });
+      }
+      const bx0 = clampIndex(Math.floor((readBounds[0] - baseBounds[0]) / baseX), baseline.width);
+      const bx1 = clampIndex(Math.ceil((readBounds[2] - baseBounds[0]) / baseX), baseline.width);
+      const by0 = clampIndex(Math.floor((baseBounds[3] - readBounds[3]) / baseY), baseline.height);
+      const by1 = clampIndex(Math.ceil((baseBounds[3] - readBounds[1]) / baseY), baseline.height);
+      if (bx1 - bx0 < 1 || by1 - by0 < 1) {
+        return res.status(400).json({ error: 'The comparison survey does not overlap the measured area.' });
+      }
+      try {
+        designBand = await readGridWindow(baseline.storage_key, [bx0, by0, bx1, by1], readWidth, readHeight, 'bilinear');
+      } catch (err) {
+        return res.status(422).json({ error: `The comparison DEM could not be sampled: ${err.message}` });
+      }
+    }
+
+    const cellWidth = (readBounds[2] - readBounds[0]) / readWidth;
+    const cellHeight = (readBounds[3] - readBounds[1]) / readHeight;
+    const cellArea = cellWidth * cellHeight;
+    const surveyNoData = survey.no_data_value === null ? null : Number(survey.no_data_value);
+    const baselineNoData = baseline && baseline.no_data_value !== null ? Number(baseline.no_data_value) : null;
+
+    const existing = [];
+    const design = [];
+    for (let row = 0; row < readHeight; row += 1) {
+      for (let col = 0; col < readWidth; col += 1) {
+        const x = readBounds[0] + (col + 0.5) * cellWidth;
+        const y = readBounds[3] - (row + 0.5) * cellHeight;
+        if (!anyPolygonContains(projectedPolygons, x, y)) continue;
+
+        const index = row * readWidth + col;
+        const z = Number(band[index]);
+        if (isNoData(z, surveyNoData)) continue;
+
+        let d = targetElevation;
+        if (designBand) {
+          d = Number(designBand[index]);
+          if (isNoData(d, baselineNoData)) continue;
+        }
+        existing.push(z);
+        design.push(d);
+      }
+    }
+
+    let result;
+    try {
+      result = computeCutFill({ existing, design, cellArea });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    if (result.cellCount === 0) {
+      return res.status(422).json({ error: 'No valid DEM cell falls inside the polygon. Move the polygon inside the survey or check the NoData value.' });
+    }
+
+    res.json({
+      surveyId: survey.id,
+      surveyName: survey.original_name,
+      crs: survey.crs,
+      crsName: surveyCrs.name,
+      verticalDatum: survey.vertical_datum,
+      designMode: designBand ? 'baseline' : 'elevation',
+      targetElevation: designBand ? null : targetElevation,
+      baselineSurveyId: designBand ? baseline.id : null,
+      polygonAreaM2: Number(inPolygonAreaM2.toFixed(2)),
+      cellCount: result.cellCount,
+      cellSizeMetres: { x: Number(cellWidth.toFixed(4)), y: Number(cellHeight.toFixed(4)) },
+      sampled,
+      resolution: sampled
+        ? `downsampled to ${readWidth} × ${readHeight} cells (limit ${MAX_CUTFILL_CELLS}); the volume is an estimate at this spacing`
+        : `${cols} × ${rows} DEM cells at native resolution`,
+      cutVolumeM3: result.cutVolumeM3,
+      fillVolumeM3: result.fillVolumeM3,
+      netVolumeM3: result.netVolumeM3,
+      surfaceAreaM2: result.surfaceAreaM2,
+      minElevation: result.minElevation,
+      maxElevation: result.maxElevation,
+      meanElevation: result.meanElevation,
+      note: 'Volumes are summed per DEM cell inside the polygon in ' + survey.crs + '; cut is existing above design, fill is existing below design. No datum grid shift or bulking factor is applied.'
     });
   }));
 

@@ -35,7 +35,12 @@ const TILE_HOSTS = [
   'https://*.tile.openstreetmap.org',
   'https://server.arcgisonline.com',
   'https://*.tile.opentopomap.org',
-  'https://basemaps.cartocdn.com'
+  'https://basemaps.cartocdn.com',
+  'https://*.basemaps.cartocdn.com',
+  // MapTiler vector styles, styles' sprites/glyphs and raster tiles. The key comes from the
+  // environment at runtime (GET /api/config); these hosts must be allowed or the map stays blank.
+  'https://api.maptiler.com',
+  'https://*.maptiler.com'
 ];
 
 app.use(helmet({
@@ -64,7 +69,9 @@ app.use(helmet({
   },
   crossOriginEmbedderPolicy: false,   // nothing here needs cross-origin isolation
   frameguard: { action: 'deny' },
-  referrerPolicy: { policy: 'no-referrer' }
+  // Strict-origin sends the origin but never the path, query string or API keys on outbound
+  // requests, and still protects the app from leaking referrers to map tile providers.
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
 }));
 
 // ==================== CORS ====================
@@ -617,6 +624,7 @@ const gisModule = createGisModule({ app, pool, verifyToken, requireProjectAccess
 
 // DEM terrain (GeoTIFF upload, statistics, preview grid, derivatives).
 const createTerrainModule = require('./terrain');
+const { maptilerConfig } = require('./maptiler');
 const terrainModule = createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR });
 
 // GIS workspaces and layers (saved map state and layer stacks).
@@ -625,7 +633,7 @@ const gisWorkspaceModule = createGisWorkspaceModule({ app, pool, verifyToken, re
 
 // Spatial analysis is its own module: it only reads datasets and writes derived datasets.
 const createGisAnalysisModule = require('./gis-analysis');
-const gisAnalysisModule = createGisAnalysisModule({ app, pool, verifyToken, requireProjectAccess });
+const gisAnalysisModule = createGisAnalysisModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR });
 
 // ==================== AUTHENTICATION ENDPOINTS ====================
 
@@ -2317,8 +2325,38 @@ app.get('/api/dashboard', verifyToken, async (req, res) => {
 
 // ==================== HEALTH CHECK ====================
 
+// Runtime map configuration. Read on every start, so MAPTILER_KEY can be rotated in the host's
+// environment without rebuilding the frontend bundle. A MapTiler browser key is public by design.
+app.get('/api/config', (req, res) => {
+  const maptiler = maptilerConfig(process.env);
+  res.set('Cache-Control', 'public, max-age=300');
+  res.json({
+    maptiler,
+    basemaps: {
+      ids: Object.keys(maptiler.styleIds),
+      default: 'street',
+      fallback: maptiler.enabled ? 'maptiler' : 'carto-esri',
+      vector: maptiler.enabled
+    },
+    features: {
+      cutFill: true,
+      clashCheck: true,
+      georeferencing: true,
+      realtimeTelemetry: false
+    }
+  });
+});
+
 app.get('/health', (req, res) => {
-  res.json({ status: 'SiteTrackerPro v3.0 Enhanced - Backend Running', timestamp: new Date() });
+  const maptiler = maptilerConfig(process.env);
+  res.json({
+    status: 'SiteTrackerPro v3.0 Enhanced - Backend Running',
+    timestamp: new Date(),
+    basemaps: {
+      maptilerVector: maptiler.enabled,
+      fallback: 'CARTO Voyager / Dark Matter + Esri World Imagery'
+    }
+  });
 });
 
 // ==================== ERROR BOUNDARY ====================
