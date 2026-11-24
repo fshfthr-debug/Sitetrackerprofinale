@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Icon from '../ui/Icon';
+import FeatureGuidePopup from '../ui/FeatureGuidePopup';
 import { answerQuestion } from '../ai/siteAi';
 import { buildHostedContext, conversationForModel, draftFromAnswer, shouldUseHostedAi } from '../ai/hosted';
 
@@ -491,6 +492,7 @@ export default function AppShell({
   const [mobileOpen, setMobileOpen] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [guideTrigger, setGuideTrigger] = useState(0);
   const online = useOnlineStatus();
   const meta = SCREEN_META[currentScreen] || SCREEN_META.dashboard;
 
@@ -507,6 +509,13 @@ export default function AppShell({
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'j') {
         event.preventDefault();
         setAiOpen(true);
+      }
+      if (event.key === '?' && !event.metaKey && !event.ctrlKey) {
+        const tag = String(event.target?.tagName || '').toLowerCase();
+        if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+          event.preventDefault();
+          setGuideTrigger(value => value + 1);
+        }
       }
       if (event.key === 'Escape') {
         setCommandOpen(false);
@@ -631,6 +640,15 @@ export default function AppShell({
             <Icon name="search" size={17} />
           </button>
 
+          <button
+            className="icon-btn"
+            onClick={() => setGuideTrigger(value => value + 1)}
+            aria-label="Open the feature guide for this screen"
+            title="Feature guide (?)"
+          >
+            <Icon name="help" size={17} />
+          </button>
+
           <button className="ai-trigger" onClick={() => setAiOpen(true)} title="Site AI (Cmd J)">
             <Icon name="sparkles" size={15} className="spark" />
             <span className="ai-text">Site AI</span>
@@ -677,6 +695,7 @@ export default function AppShell({
         activeProject={activeProject}
         onNavigate={navigate}
       />
+      <FeatureGuidePopup screen={currentScreen} trigger={guideTrigger} onNavigate={navigate} />
     </div>
   );
 }

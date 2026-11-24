@@ -1,4 +1,5 @@
 import maplibregl from 'maplibre-gl';
+import { DEFAULT_BASEMAP, rasterBasemap } from './basemaps';
 
 export const DEFAULT_CENTER = [38.78, 9.02];
 export const SITE_ATTRIBUTION = '© OpenStreetMap contributors';
@@ -28,11 +29,28 @@ function roadWidth(extra = 0) {
   ];
 }
 
-export function basemapStyle(basemap) {
+// `basemapId` selects a global raster tile service from ./basemaps.js. Passing the
+// `local` id (or an unknown one) falls back to drawing the shipped GeoJSON extract,
+// which is the offline case.
+export function basemapStyle(basemap, basemapId = DEFAULT_BASEMAP) {
   const sources = {};
   const layers = [{ id: 'background', type: 'background', paint: { 'background-color': '#f5f2ea' } }];
 
-  if (basemap && Array.isArray(basemap.features)) {
+  const raster = rasterBasemap(basemapId);
+  if (raster) {
+    layers[0].paint['background-color'] = raster.background;
+    sources['basemap-raster'] = {
+      type: 'raster',
+      tiles: raster.tiles,
+      tileSize: 256,
+      maxzoom: raster.maxZoom,
+      attribution: raster.attribution
+    };
+    layers.push({
+      id: 'basemap-raster', type: 'raster', source: 'basemap-raster',
+      paint: { 'raster-opacity': 1 }
+    });
+  } else if (basemap && Array.isArray(basemap.features)) {
     sources.basemap = { type: 'geojson', data: basemap, tolerance: 0.4 };
 
     layers.push(

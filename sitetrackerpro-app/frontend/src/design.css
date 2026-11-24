@@ -91,6 +91,53 @@ body {
 
 button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
+
+/* ==========================================================================
+   Text caret and pointer discipline
+
+   Only real text entry may show a blinking caret. `caret-color: transparent` on
+   the document stops one appearing anywhere the browser decides an element is
+   editable (a stray tabindex, a contenteditable wrapper, a canvas that was
+   focused by a click); the form fields below opt back in. Selection is left
+   alone so records and logs stay copyable.
+   ========================================================================== */
+body { caret-color: transparent; }
+input, textarea, [contenteditable="true"], [contenteditable=""] { caret-color: auto; }
+
+/* Basemap switcher in the map toolbar. Small and quiet: it is a view control, not
+   a primary action. */
+.map-basemaps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface-2);
+}
+.map-basemap-btn {
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 9.5px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+  padding: 4px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+  transition: background 120ms var(--ease), color 120ms var(--ease);
+}
+.map-basemap-btn:hover { background: var(--surface-3); color: var(--ink); }
+.map-basemap-btn.active { background: var(--basalt); color: #f7f4ee; }
+
+/* The map is a surface you drag, not a document you type into. */
+.maplibregl-canvas,
+.maplibregl-canvas-container { cursor: grab; }
+.maplibregl-canvas-container.maplibregl-interactive:active,
+.maplibregl-canvas-container.maplibregl-interactive:active .maplibregl-canvas { cursor: grabbing; }
+/* Annotation / measuring modes set an inline crosshair; this keeps the class route working too. */
+.map-crosshair .maplibregl-canvas,
+.map-crosshair .maplibregl-canvas-container { cursor: crosshair; }
 a { color: inherit; }
 img { max-width: 100%; }
 ::selection { background: var(--copper-soft); color: var(--copper-strong); }
@@ -2321,4 +2368,416 @@ input[type="file"].input::file-selector-button {
 @media (max-width: 620px) {
   .bim-viewer .bim-stage { height: 340px; min-height: 340px !important; }
   .bim-viewer .bim-stage > div:nth-child(2) { top: 7px; left: 7px; right: 7px; }
+}
+
+/* ---------------------------------------------------------------- pop-up system */
+/* One shell for every pop-up in the product: feature guides and map records. */
+
+.pop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(17, 21, 18, 0.45);
+  backdrop-filter: blur(3px);
+  animation: fade-in 150ms var(--ease) both;
+}
+
+.pop-card {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: min(88vh, 820px);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  animation: pop-in 180ms var(--ease) both;
+}
+
+.pop-card.pop-lg { width: min(720px, 100%); }
+
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pop-overlay, .pop-card { animation: none; }
+}
+
+.pop-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px 18px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.pop-head-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--copper-soft);
+  color: var(--copper-strong);
+}
+
+.pop-head-copy { flex: 1; min-width: 0; }
+
+.pop-kicker {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.pop-head h2 { margin: 2px 0 0; font-size: 17px; line-height: 1.25; }
+
+.pop-body { flex: 1; padding: 16px 18px; overflow-y: auto; }
+
+.pop-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 18px;
+  background: var(--surface-2);
+  border-top: 1px solid var(--line);
+}
+
+/* ---------------------------------------------------------------- feature guides */
+
+.guide-summary { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--ink-2); }
+
+.guide-markers { display: flex; flex-wrap: wrap; gap: 6px; margin: 13px 0 6px; }
+
+.guide-markers span {
+  padding: 3px 8px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+}
+
+.guide-steps { display: grid; gap: 11px; margin: 8px 0 0; padding: 0; list-style: none; }
+
+.guide-steps li { display: flex; gap: 10px; }
+
+.guide-step-num {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 50%;
+  background: var(--basalt);
+  color: #f7f4ee;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.guide-steps strong { font-size: 12px; }
+
+.guide-steps p { margin: 2px 0 0; font-size: 11.5px; line-height: 1.55; color: var(--ink-3); }
+
+.guide-tips {
+  margin-top: 14px;
+  padding: 11px 13px;
+  background: var(--amber-soft);
+  border: 1px solid #e8d4ae;
+  border-radius: 10px;
+}
+
+.guide-tips-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  color: #7b4a0d;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.guide-tips ul { margin: 0; padding-left: 16px; }
+.guide-tips li { margin: 3px 0; font-size: 11px; line-height: 1.5; color: #6d4311; }
+
+.guide-related { margin-top: 14px; }
+.guide-related > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 9px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.guide-related > div { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.guide-related button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  font-size: 10.5px;
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.guide-related button:hover { border-color: var(--copper); color: var(--copper-strong); }
+
+.guide-goto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fffaf3;
+  background: var(--copper);
+  border: 1px solid var(--copper);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.guide-note { margin: 14px 0 0; font-size: 9.5px; line-height: 1.5; color: var(--ink-3); }
+.guide-note kbd { font-size: 9px; }
+
+.guide-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; width: 100%; }
+.guide-auto { display: inline-flex; align-items: center; gap: 7px; font-size: 10.5px; color: var(--ink-3); }
+.guide-foot-nav { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+.guide-index { display: grid; gap: 4px; }
+
+.guide-index-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  text-align: left;
+  color: var(--ink);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+}
+.guide-index-item:hover { background: var(--surface-2); }
+.guide-index-item.active { background: var(--surface-2); border-color: var(--line-strong); }
+.guide-index-item svg { flex: 0 0 auto; color: var(--copper); }
+.guide-index-item span { min-width: 0; }
+.guide-index-item strong { display: block; font-size: 11.5px; }
+.guide-index-item small { display: block; margin-top: 1px; font-size: 9.5px; color: var(--ink-3); }
+.guide-here {
+  margin-left: auto;
+  padding: 1px 6px;
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--copper-strong);
+  background: var(--copper-soft);
+  border-radius: 4px;
+}
+
+/* ---------------------------------------------------------------- Ethiopia coverage */
+
+/* The map toolbar container is pointer-events:none so the map stays draggable
+   through it; every control inside it must opt back in. */
+.map-eth-toggle { display: inline-flex; align-items: center; gap: 5px; pointer-events: auto; }
+
+.eth-panel {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-xs);
+}
+
+.eth-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.eth-head h4 { margin: 0; font-size: 12px; }
+.eth-head p { margin: 2px 0 0; font-size: 9.5px; line-height: 1.4; color: var(--ink-3); }
+.eth-head button {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--ink-3);
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.eth-head button:hover { background: var(--surface-3); }
+
+.eth-body { padding: 10px 12px 12px; max-height: 360px; overflow-y: auto; }
+
+.eth-stat { display: flex; align-items: baseline; gap: 5px; margin-bottom: 8px; }
+.eth-stat strong { font-family: var(--font-mono); font-size: 16px; }
+.eth-stat span { font-size: 9.5px; color: var(--ink-3); line-height: 1.4; }
+
+.eth-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 9px; }
+
+.eth-chip {
+  padding: 5px 8px;
+  font-size: 9.5px;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.eth-chip:hover { border-color: var(--copper); color: var(--copper-strong); }
+.eth-chip.on { background: var(--basalt); border-color: var(--basalt); color: #f7f4ee; }
+
+.eth-search { position: relative; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+.eth-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 9px;
+  font-size: 10.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  outline: none;
+}
+.eth-search input:focus { border-color: var(--copper); }
+.eth-search svg { color: var(--ink-3); }
+
+.eth-results { display: grid; gap: 2px; margin-bottom: 8px; }
+.eth-result {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  font-size: 10.5px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.eth-result:hover { border-color: var(--copper); }
+.eth-result span { font-size: 9px; color: var(--ink-3); }
+.eth-empty { padding: 6px 2px; font-size: 9.5px; color: var(--ink-3); }
+
+.eth-regions { display: grid; gap: 3px; }
+.eth-region-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  padding: 5px 7px;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10.5px;
+  color: var(--ink);
+}
+.eth-region-row:hover, .eth-region-row:focus-visible { background: var(--surface-2); border-color: var(--line); }
+.eth-region-row small { display: block; font-size: 8.5px; color: var(--ink-3); }
+.eth-region-row b { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--ink-2); }
+.eth-bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.eth-bar i { display: block; height: 100%; background: var(--copper); }
+
+.eth-note { margin: 9px 0 0; font-size: 8.5px; line-height: 1.45; color: var(--ink-3); }
+
+.eth-region-label {
+  padding: 1px 4px;
+  font: 600 10px/1.3 var(--font-sans);
+  color: #1d2730;
+  white-space: nowrap;
+  pointer-events: none;
+  background: rgba(255, 255, 255, 0.74);
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.eth-place-pop { display: flex; flex-direction: column; gap: 2px; padding: 2px 4px; }
+.eth-place-pop strong { font-size: 11px; color: var(--ink); }
+.eth-place-pop span { font-size: 9.5px; line-height: 1.4; color: var(--ink-3); }
+
+.eth-region-record { display: grid; gap: 10px; }
+.eth-region-record .eth-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.eth-region-record .eth-fact {
+  padding: 9px 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+}
+.eth-region-record .eth-fact small {
+  display: block;
+  font-size: 8.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.eth-region-record .eth-fact strong { display: block; margin-top: 2px; font-size: 13px; }
+.eth-region-record ul { margin: 0; padding-left: 16px; }
+.eth-region-record li { margin: 3px 0; font-size: 11px; color: var(--ink-2); }
+
+/* ---------------------------------------------------------------- small screens */
+/* The map toolbar is a single absolute row on desktop. On a phone that row cannot
+   hold six basemaps, the search box, the badges and the Ethiopia control, so it
+   wraps into two deliberate rows instead of spilling across the map. */
+@media (max-width: 640px) {
+  .map-top {
+    right: 10px;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .map-search {
+    flex: 1 1 100%;
+    width: 100%;
+    order: -1;
+  }
+
+  .map-basemaps {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .map-basemaps::-webkit-scrollbar { display: none; }
+  .map-basemap-btn { flex: 0 0 auto; }
+
+  .map-eth-toggle { flex: 0 0 auto; }
+
+  /* The panel is the main content on a phone; let the page scroll rather than
+     trapping the region list inside its own scroll area. */
+  .eth-body { max-height: none; }
 }

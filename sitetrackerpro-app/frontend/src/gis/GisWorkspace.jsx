@@ -7,10 +7,50 @@ import OsmExplorer from './OsmExplorer';
 import SurveyGis from './SurveyGis';
 import Georeferencing from './Georeferencing';
 import MapPrintLayout, { niceDistance, formatDistance } from './MapPrintLayout';
+import EthiopiaCoveragePanel from './EthiopiaCoveragePanel';
 import Icon from '../ui/Icon';
 import { DEFAULT_CENTER, SITE_ATTRIBUTION, addPlaceLabels, basemapStyle } from './basemap';
+import { BASEMAP_CHOICES, DEFAULT_BASEMAP } from './basemaps';
+import Popup from '../ui/Popup';
+import ETHIOPIA_BOUNDARIES from './ethiopia-regions.json';
+import {
+  COVERAGE_RAMP, ETHIOPIA_EXTENT, ETHIOPIA_REGIONS,
+  coverageByRegion, regionLabel, searchEthiopia
+} from './ethiopia';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
+
+// ---------------------------------------------------------------------------
+// Ethiopia national layer. The ADM1 geometry is bundled with the app (64 KB,
+// simplified from geoBoundaries, CC BY 4.0) rather than fetched, so the country
+// draws even when the API or a tile host is slow. Bounds are precomputed here so
+// "zoom to region" never has to walk the coordinates again.
+// ---------------------------------------------------------------------------
+function geometryBounds(geometry) {
+  const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+  const walk = (coordinates) => {
+    if (typeof coordinates[0] === 'number') {
+      bounds[0] = Math.min(bounds[0], coordinates[0]);
+      bounds[1] = Math.min(bounds[1], coordinates[1]);
+      bounds[2] = Math.max(bounds[2], coordinates[0]);
+      bounds[3] = Math.max(bounds[3], coordinates[1]);
+      return;
+    }
+    coordinates.forEach(walk);
+  };
+  walk(geometry.coordinates);
+  return bounds;
+}
+
+const REGION_BOUNDS = {};
+const REGION_CENTRES = {};
+ETHIOPIA_BOUNDARIES.features.forEach(feature => {
+  const name = feature.properties?.name;
+  if (!name) return;
+  const bounds = geometryBounds(feature.geometry);
+  REGION_BOUNDS[name] = bounds;
+  REGION_CENTRES[name] = [(bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2];
+});
 
 const styles = {
   page: { padding: '0 0 24px' },
@@ -137,6 +177,8 @@ export default function GisWorkspace({ token, projects }) {
   const [mapReady, setMapReady] = useState(false);
   const [styleVersion, setStyleVersion] = useState(0);
   const [basemapError, setBasemapError] = useState(false);
+  const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP);
+  const [localBasemap, setLocalBasemap] = useState(null);
   const [selected, setSelected] = useState(null);
   const [savingView, setSavingView] = useState(false);
   const [crsList, setCrsList] = useState([]);
@@ -177,6 +219,13 @@ export default function GisWorkspace({ token, projects }) {
   const [mapQuery, setMapQuery] = useState('');
   const [mapSearchOpen, setMapSearchOpen] = useState(false);
 
+  // Ethiopia coverage tools
+  const [ethiopiaOpen, setEthiopiaOpen] = useState(false);
+  const [ethiopiaLayers, setEthiopiaLayers] = useState({ boundaries: true, labels: true, coverage: true });
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [regionRecord, setRegionRecord] = useState(null);
+  const [placeRecord, setPlaceRecord] = useState(null);
+
   useEffect(() => {
     const onResize = () => setNarrow(window.innerWidth < 900);
     window.addEventListener('resize', onResize);
@@ -185,6 +234,9 @@ export default function GisWorkspace({ token, projects }) {
 
   const mapContainer = useRef(null);
   const mapRef = useRef(null);
+  const regionMarkersRef = useRef([]);
+  const ethiopiaPanelRef = useRef(null);
+  const placePopupRef = useRef(null);
   const fittedRef = useRef(null);
   const markersRef = useRef([]);
   const opacityTimers = useRef({});
@@ -208,7 +260,7 @@ export default function GisWorkspace({ token, projects }) {
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: basemapStyle(null),
+      style: basemapStyle(null, DEFAULT_BASEMAP),
       center: DEFAULT_CENTER,
       zoom: 11,
       attributionControl: false,
@@ -245,14 +297,13 @@ export default function GisWorkspace({ token, projects }) {
     map.on('mousemove', event => setCursor({ lng: event.lngLat.lng, lat: event.lngLat.lat }));
     map.on('mouseout', () => setCursor(null));
 
-    // The local OSM extract is applied separately: a 12 MB style object is more reliably attached
-    // after the map shell already exists.
+    // The shipped extract is optional now: it is the offline basemap, loaded in the
+    // background so choosing it is instant. A failure only matters for that choice.
     (async () => {
       try {
         const response = await axios.get(`${API_URL}/basemaps/addis-osm.json`);
         if (cancelled) return;
-        markersRef.current = addPlaceLabels(map, response.data);
-        map.setStyle(basemapStyle(response.data));
+        setLocalBasemap(response.data);
       } catch (err) {
         if (!cancelled) setBasemapError(true);
       }
@@ -269,6 +320,165 @@ export default function GisWorkspace({ token, projects }) {
       setMapReady(false);
     };
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // Basemap switching. setStyle replaces every layer in the style, and the managed
+  // `gislayer-*` layers are re-drawn by the style.load listener, so project layers
+  // survive the swap. Place labels are DOM markers and are rebuilt here.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return;
+    markersRef.current.forEach(marker => marker.remove());
+    markersRef.current = [];
+    if (basemapId === 'local' && localBasemap) {
+      markersRef.current = addPlaceLabels(map, localBasemap);
+    }
+    map.setStyle(basemapStyle(localBasemap, basemapId));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basemapId, localBasemap, mapReady]);
+
+  // ---------------------------------------------------------------------------
+  // Ethiopia coverage. Boundaries and labels survive basemap swaps because the
+  // effect re-runs on every style load (styleVersion). Project layers stay on top
+  // by inserting the national layers before the first `gislayer-` layer.
+  // ---------------------------------------------------------------------------
+  const geoCoverage = useMemo(() => coverageByRegion(projects || []), [projects]);
+  const ethiopiaMatches = useMemo(() => searchEthiopia(placeQuery), [placeQuery]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady) return undefined;
+
+    const clearLayers = () => {
+      ['ethiopia-fill', 'ethiopia-line'].forEach(layerId => {
+        if (map.getLayer(layerId)) map.removeLayer(layerId);
+      });
+      if (map.getSource('ethiopia-regions')) map.removeSource('ethiopia-regions');
+    };
+
+    clearLayers();
+    if (!ethiopiaLayers.boundaries) return undefined;
+
+    const counts = geoCoverage.counts;
+    const matchCounts = [
+      'match', ['get', 'name'],
+      ...ETHIOPIA_REGIONS.flatMap(region => [region.name, counts[region.name] || 0]),
+      0
+    ];
+    const beforeId = (map.getStyle().layers || []).find(layer => String(layer.id).startsWith('gislayer-'))?.id;
+
+    map.addSource('ethiopia-regions', { type: 'geojson', data: ETHIOPIA_BOUNDARIES });
+    map.addLayer({
+      id: 'ethiopia-fill',
+      type: 'fill',
+      source: 'ethiopia-regions',
+      paint: {
+        'fill-color': [
+          'step', matchCounts,
+          COVERAGE_RAMP[0], 1, COVERAGE_RAMP[1], 2, COVERAGE_RAMP[2], 3, COVERAGE_RAMP[3], 6, COVERAGE_RAMP[4]
+        ],
+        'fill-opacity': ethiopiaLayers.coverage ? 0.55 : 0.12
+      }
+    }, beforeId);
+    map.addLayer({
+      id: 'ethiopia-line',
+      type: 'line',
+      source: 'ethiopia-regions',
+      paint: { 'line-color': '#8a5a33', 'line-width': 1.4, 'line-opacity': 0.9 }
+    }, beforeId);
+
+    const onClick = event => {
+      const feature = event.features && event.features[0];
+      const name = feature && feature.properties ? feature.properties.name : '';
+      if (!name) return;
+      setRegionRecord({ name, projects: geoCoverage.byRegion[name] || [] });
+    };
+    const onEnter = () => { map.getCanvas().style.cursor = 'pointer'; };
+    const onLeave = () => { if (!annotationModeRef.current) map.getCanvas().style.cursor = ''; };
+
+    map.on('click', 'ethiopia-fill', onClick);
+    map.on('mousemove', 'ethiopia-fill', onEnter);
+    map.on('mouseleave', 'ethiopia-fill', onLeave);
+
+    return () => {
+      map.off('click', 'ethiopia-fill', onClick);
+      map.off('mousemove', 'ethiopia-fill', onEnter);
+      map.off('mouseleave', 'ethiopia-fill', onLeave);
+      clearLayers();
+    };
+  }, [mapReady, styleVersion, ethiopiaLayers.boundaries, ethiopiaLayers.coverage, geoCoverage]);
+
+  // Region names are DOM markers for the same reason feature labels are: the
+  // local basemap has no glyph server, so a symbol layer would need a font host.
+  // They hide once the view is closer than the country so towns stay readable.
+  useEffect(() => {
+    regionMarkersRef.current.forEach(entry => entry.marker.remove());
+    regionMarkersRef.current = [];
+    const map = mapRef.current;
+    if (!map || !mapReady || !ethiopiaLayers.boundaries || !ethiopiaLayers.labels) return undefined;
+
+    // At country zoom the two chartered cities and Harari are dots, so their
+    // labels would pile up on each other. They appear once the view is closer.
+    const smallAtCountryZoom = ['Addis Ababa', 'Dire Dawa', 'Hareri'];
+
+    ETHIOPIA_REGIONS.forEach(region => {
+      const count = geoCoverage.counts[region.name] || 0;
+      const element = document.createElement('div');
+      element.className = 'eth-region-label';
+      element.textContent = count ? `${region.label} · ${count}` : region.label;
+      const marker = new maplibregl.Marker({ element, anchor: 'center' })
+        .setLngLat(REGION_CENTRES[region.name] || region.center)
+        .addTo(map);
+      regionMarkersRef.current.push({ name: region.name, marker });
+    });
+
+    const syncVisibility = () => {
+      const zoom = map.getZoom();
+      regionMarkersRef.current.forEach(entry => {
+        const show = zoom < 8.2 && !(zoom < 5.7 && smallAtCountryZoom.includes(entry.name));
+        entry.marker.getElement().style.display = show ? '' : 'none';
+      });
+    };
+    map.on('zoom', syncVisibility);
+    syncVisibility();
+
+    return () => {
+      map.off('zoom', syncVisibility);
+      regionMarkersRef.current.forEach(entry => entry.marker.remove());
+      regionMarkersRef.current = [];
+    };
+  }, [mapReady, styleVersion, ethiopiaLayers.boundaries, ethiopiaLayers.labels, geoCoverage]);
+
+  // A searched town drops a labelled marker; the popup is the place record.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (placePopupRef.current) {
+      placePopupRef.current.remove();
+      placePopupRef.current = null;
+    }
+    if (!map || !mapReady || !placeRecord) return undefined;
+
+    const element = document.createElement('div');
+    element.className = 'eth-place-pop';
+    const title = document.createElement('strong');
+    title.textContent = placeRecord.name;
+    const detail = document.createElement('span');
+    detail.textContent = placeRecord.detail;
+    element.append(title, detail);
+
+    const popup = new maplibregl.Popup({ offset: 14, closeButton: true, maxWidth: '260px' })
+      .setLngLat(placeRecord.center)
+      .setDOMContent(element)
+      .addTo(map);
+    popup.on('close', () => setPlaceRecord(null));
+    placePopupRef.current = popup;
+
+    return () => {
+      popup.remove();
+      if (placePopupRef.current === popup) placePopupRef.current = null;
+    };
+  }, [placeRecord, mapReady]);
 
   // ---------------------------------------------------------------------------
   // Project data
@@ -1198,6 +1408,44 @@ export default function GisWorkspace({ token, projects }) {
     return { columns, rows, total: features.length };
   }, [tableLayerId, payloads, tableFilter, tableSort]);
 
+  // The coverage panel floats over the map, so framing has to use asymmetric
+  // padding: otherwise the western half of the country sits behind the panel.
+  // On a phone the panel spans the map, so plain padding is correct there.
+  const framingPadding = () => ({ top: 60, left: 24, right: 24, bottom: 30 });
+
+  const fitEthiopia = () => {
+    if (mapRef.current) mapRef.current.fitBounds(ETHIOPIA_EXTENT, { padding: framingPadding(), duration: 1100 });
+  };
+
+  // Search results and the region list share one target shape.
+  const focusEthiopiaTarget = (target) => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (target.kind === 'region') {
+      const bounds = REGION_BOUNDS[target.region];
+      if (bounds) {
+        map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: framingPadding(), duration: 1000 });
+      } else {
+        map.flyTo({ center: target.center, zoom: target.zoom, duration: 1000 });
+      }
+      setRegionRecord({ name: target.region, projects: geoCoverage.byRegion[target.region] || [] });
+    } else {
+      map.flyTo({ center: target.center, zoom: target.zoom, duration: 1200 });
+      setPlaceRecord(target);
+    }
+    setPlaceQuery('');
+  };
+
+  // On a phone the rail sits above the map, so opening the panel from the map
+  // toolbar has to bring it into view or nothing appears to happen.
+  useEffect(() => {
+    if (ethiopiaOpen && narrow) {
+      ethiopiaPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [ethiopiaOpen, narrow]);
+
+  const coverageMax = Math.max(1, ...Object.values(geoCoverage.counts));
+
   const toggleTableSort = key => {
     setTableSort(current => current.key === key
       ? { key, direction: current.direction === 'asc' ? 'desc' : 'asc' }
@@ -1211,8 +1459,9 @@ export default function GisWorkspace({ token, projects }) {
           <div className="eyebrow">Spatial operations / workspace</div>
           <h1 className="page-title">Map intelligence</h1>
           <p className="page-sub">
-            A map-first record of layers, terrain, survey control and georeferencing. The local
-            OpenStreetMap basemap provides context; survey observations remain the measured record.
+            A map-first record of layers, terrain, survey control and georeferencing. Open the
+            Ethiopia panel for national regions, place search and portfolio coverage; survey
+            observations remain the measured record.
           </p>
         </div>
         <div className="page-actions">
@@ -1234,11 +1483,11 @@ export default function GisWorkspace({ token, projects }) {
       {error && <div style={styles.error} role="alert">{error}</div>}
       {notice && <div style={styles.notice}>{notice}</div>}
       {busy && <div style={styles.notice}>{busy}</div>}
-      {basemapError && (
+      {basemapError && basemapId === 'local' && (
         <div style={styles.error}>
           No local basemap extract at <code>/basemaps/addis-osm.json</code>. Run
-          {' '}<code>node scripts/build-basemap.js</code> (or the PBF variant) and restart the backend.
-          Project layers still work on a plain background.
+          {' '}<code>node scripts/build-basemap.js</code> (or the PBF variant) and restart the backend,
+          or switch to Street, Satellite, Terrain or Dark GIS above the map.
         </div>
       )}
 
@@ -1298,6 +1547,22 @@ export default function GisWorkspace({ token, projects }) {
                 </div>
               </>
             )}
+          </div>
+
+          <div ref={ethiopiaPanelRef}>
+          <EthiopiaCoveragePanel
+            open={ethiopiaOpen}
+            onClose={() => setEthiopiaOpen(false)}
+            coverage={geoCoverage}
+            coverageMax={coverageMax}
+            layers={ethiopiaLayers}
+            setLayers={setEthiopiaLayers}
+            query={placeQuery}
+            setQuery={setPlaceQuery}
+            matches={ethiopiaMatches}
+            onFocus={focusEthiopiaTarget}
+            onFit={fitEthiopia}
+          />
           </div>
 
           {projectId && (
@@ -1990,6 +2255,29 @@ export default function GisWorkspace({ token, projects }) {
                   </div>
                 )}
               </div>
+              <div className="map-basemaps" role="group" aria-label="Basemap">
+                {BASEMAP_CHOICES.map(choice => (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    className={`map-basemap-btn${basemapId === choice.id ? ' active' : ''}`}
+                    aria-pressed={basemapId === choice.id}
+                    title={choice.attribution || choice.label}
+                    onClick={() => setBasemapId(choice.id)}
+                  >
+                    {choice.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className={`map-basemap-btn map-eth-toggle${ethiopiaOpen ? ' active' : ''}`}
+                aria-pressed={ethiopiaOpen}
+                onClick={() => setEthiopiaOpen(value => !value)}
+                title="Ethiopia national coverage"
+              >
+                <Icon name="globe" size={12} /> Ethiopia
+              </button>
               <div className="map-badge secondary"><Icon name="layers" size={11} /> <strong>{layers.length}</strong> layers</div>
               <div className="map-badge"><Icon name="compass" size={11} /> <strong>{workingCrs}</strong></div>
             </div>
@@ -2099,6 +2387,74 @@ export default function GisWorkspace({ token, projects }) {
           )}
         </div>
       </div>
+
+      <Popup
+        open={Boolean(regionRecord)}
+        onClose={() => setRegionRecord(null)}
+        kicker="Ethiopia / regional coverage"
+        title={regionRecord ? regionLabel(regionRecord.name) : 'Region'}
+        icon="globe"
+        size="md"
+        ariaLabel="Ethiopia region record"
+        footer={
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {regionRecord && REGION_BOUNDS[regionRecord.name] && (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  const bounds = REGION_BOUNDS[regionRecord.name];
+                  if (mapRef.current) {
+                    mapRef.current.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], { padding: framingPadding(), duration: 900 });
+                  }
+                }}
+              >
+                Zoom to region
+              </button>
+            )}
+            <button type="button" className="btn btn-sm" onClick={fitEthiopia}>Whole country</button>
+            <button type="button" className="btn btn-primary btn-sm" onClick={() => setRegionRecord(null)}>Close</button>
+          </div>
+        }
+      >
+        {regionRecord && (() => {
+          const meta = ETHIOPIA_REGIONS.find(region => region.name === regionRecord.name);
+          const share = geoCoverage.total
+            ? Math.round((regionRecord.projects.length / geoCoverage.total) * 100)
+            : 0;
+          return (
+            <div className="eth-region-record">
+              <div className="eth-facts">
+                <div className="eth-fact"><small>Capital</small><strong>{meta?.capital || '—'}</strong></div>
+                <div className="eth-fact"><small>Type</small><strong>{meta?.kind || 'Regional unit'}</strong></div>
+                <div className="eth-fact"><small>Projects placed</small><strong>{regionRecord.projects.length}</strong></div>
+                <div className="eth-fact"><small>Share of portfolio</small><strong>{share}%</strong></div>
+              </div>
+              <div>
+                <strong style={{ fontSize: 11 }}>Projects in this region</strong>
+                {regionRecord.projects.length === 0 ? (
+                  <p style={{ ...styles.helper, marginBottom: 0 }}>
+                    No project location resolves to this region yet. Type the town or region on the
+                    project record and it appears here and in the shading.
+                  </p>
+                ) : (
+                  <ul>
+                    {regionRecord.projects.map(project => (
+                      <li key={project.id}>
+                        {project.name}{project.location ? ` · ${project.location}` : ''}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <p style={{ ...styles.helper, marginBottom: 0 }}>
+                Coverage is inferred from the project location text. It places the portfolio for
+                planning; it is not a cadastral or administrative boundary record.
+              </p>
+            </div>
+          );
+        })()}
+      </Popup>
 
       {printSnapshot && (
         <MapPrintLayout
