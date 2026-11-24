@@ -2598,6 +2598,7 @@ input[type="file"].input::file-selector-button {
 
 /* The map toolbar container is pointer-events:none so the map stays draggable
    through it; every control inside it must opt back in. */
+.map-basemaps { pointer-events: auto; }
 .map-eth-toggle { display: inline-flex; align-items: center; gap: 5px; pointer-events: auto; }
 
 .eth-panel {
