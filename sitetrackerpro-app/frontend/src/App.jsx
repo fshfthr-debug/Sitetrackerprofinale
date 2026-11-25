@@ -167,6 +167,14 @@ function AuthScreen({ setToken, sessionExpired = false, notice = '' }) {
   const [forgot, setForgot] = useState(false);
   const [resetMessage, setResetMessage] = useState('');
   const [resetDelivery, setResetDelivery] = useState('');
+  // Second-factor states: a password-only sign-in lands in one of these instead of the app.
+  const [challenge, setChallenge] = useState('');
+  const [mfaCode, setMfaCode] = useState('');
+  const [setupToken, setSetupToken] = useState('');
+  const [enrollment, setEnrollment] = useState(null);
+  const [enrollCode, setEnrollCode] = useState('');
+  const [recoveryCodes, setRecoveryCodes] = useState(null);
+  const [pendingToken, setPendingToken] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -181,8 +189,22 @@ function AuthScreen({ setToken, sessionExpired = false, notice = '' }) {
         company: !isLogin ? company.trim() || undefined : undefined
       });
 
-      localStorage.setItem('token', response.data.token);
-      setToken(response.data.token);
+      const data = response.data || {};
+
+      // A password is only the first factor for an account with an authenticator; a role that
+      // must use one but has not enrolled yet gets a session that can only finish the setup.
+      if (data.mfaRequired) {
+        setChallenge(data.challenge);
+        setMfaCode('');
+        return;
+      }
+      if (data.mfaSetupRequired) {
+        await beginEnrollment(data.token);
+        return;
+      }
+
+      localStorage.setItem('token', data.token);
+      setToken(data.token);
     } catch (err) {
       // The server can return several password problems at once; show them all.
       const data = err.response?.data;
@@ -223,6 +245,171 @@ function AuthScreen({ setToken, sessionExpired = false, notice = '' }) {
     }
     return 'The link works once and expires in one hour. If it has not arrived in a few minutes, check your spam folder.';
   };
+
+  const beginEnrollment = async (authToken) => {
+    setSetupToken(authToken);
+    const response = await axios.post(`${API_URL}/auth/mfa/setup`, {}, {
+      headers: { Authorization: `Bearer ${authToken}` }
+    });
+    setEnrollment(response.data);
+  };
+
+  const submitTotp = async (event) => {
+    event.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      const response = await axios.post(`${API_URL}/auth/login/mfa`, { challenge, code: mfaCode });
+      localStorage.setItem('token', response.data.token);
+      setToken(response.data.token);
+    } catch (err) {
+      setError(err.response?.data?.error || 'That code was not accepted. Use the next one from your app.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmEnrollment = async (event) => {
+    event.preventDefault();
+    setError('');
+    setBusy(true);
+    try {
+      const response = await axios.post(`${API_URL}/auth/mfa/enable`, { code: enrollCode }, {
+        headers: { Authorization: `Bearer ${setupToken}` }
+      });
+      setRecoveryCodes(response.data.recoveryCodes || []);
+      setPendingToken(response.data.token);
+    } catch (err) {
+      setError(err.response?.data?.error || 'That code was not accepted. Wait for the next one and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Administrators finish here rather than in the app, because until they do, their session
+  // is allowed to do nothing else.
+  if (challenge) {
+    return (
+      <div className="auth auth-single">
+        <section className="auth-panel">
+          <div className="auth-form">
+            <Brand size={42} />
+            <h2>Enter your code</h2>
+            <p className="auth-form-sub">
+              Open your authenticator app and type the 6-digit code for {email}.
+            </p>
+            <form onSubmit={submitTotp}>
+              <div className="field">
+                <label htmlFor="mfa-code">Authenticator code</label>
+                <input
+                  id="mfa-code"
+                  className="input"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={11}
+                  placeholder="123 456"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  autoFocus
+                  required
+                />
+              </div>
+              {error && <div className="auth-error" role="alert">{error}</div>}
+              <button type="submit" className="btn btn-primary auth-submit" disabled={busy}>
+                {busy ? 'Checking…' : 'Sign in'}
+              </button>
+            </form>
+            <div className="auth-switch">
+              <button onClick={() => { setChallenge(''); setMfaCode(''); setError(''); }}>
+                Use a different account
+              </button>
+            </div>
+            <p className="auth-legal">
+              Lost your phone? A recovery code works in the same box, once each.
+            </p>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  if (setupToken && enrollment) {
+    if (recoveryCodes) {
+      return (
+        <div className="auth auth-single">
+          <section className="auth-panel">
+            <div className="auth-form">
+              <Brand size={42} />
+              <h2>Save your recovery codes</h2>
+              <p className="auth-form-sub">
+                Each one works once, if you lose your phone. They are shown this once only.
+              </p>
+              <div style={mfaStyles.codes}>
+                {recoveryCodes.map(value => <code key={value} style={mfaStyles.code}>{value}</code>)}
+              </div>
+              <button
+                className="btn btn-primary auth-submit"
+                onClick={() => {
+                  localStorage.setItem('token', pendingToken);
+                  setToken(pendingToken);
+                }}
+              >
+                I have saved these — continue <Icon name="arrowRight" size={14} />
+              </button>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    return (
+      <div className="auth auth-single">
+        <section className="auth-panel">
+          <div className="auth-form">
+            <Brand size={42} />
+            <h2>Set up two-factor</h2>
+            <p className="auth-form-sub">
+              Administrator accounts need a second step at sign-in. Add this key to your
+              authenticator app, then type the code it shows.
+            </p>
+            <div className="field">
+              <label>Setup key for {enrollment.account}</label>
+              <div style={mfaStyles.secretRow}>
+                <code style={mfaStyles.secret}>{enrollment.secret}</code>
+                <button type="button" className="btn btn-sm" onClick={() => copyText(enrollment.secret)}>Copy</button>
+              </div>
+              <span style={mfaStyles.help}>
+                In Google Authenticator, Authy, 1Password or Microsoft Authenticator choose
+                “enter a setup key”, then “time based”. Keep the app's time to automatic.
+              </span>
+            </div>
+            <form onSubmit={confirmEnrollment}>
+              <div className="field">
+                <label htmlFor="enroll-code">Code from the app</label>
+                <input
+                  id="enroll-code"
+                  className="input"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={11}
+                  placeholder="123 456"
+                  value={enrollCode}
+                  onChange={(e) => setEnrollCode(e.target.value)}
+                  required
+                />
+              </div>
+              {error && <div className="auth-error" role="alert">{error}</div>}
+              <button type="submit" className="btn btn-primary auth-submit" disabled={busy}>
+                {busy ? 'Checking…' : 'Turn on two-factor'}
+              </button>
+            </form>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   if (forgot) {
     return (
@@ -561,6 +748,40 @@ const ROLE_CHOICES = [
   { value: 'analyst', label: 'Analyst', hint: 'Adds and edits project data, runs analysis and imports.' },
   { value: 'admin', label: 'Admin', hint: 'Also deletes records and manages team access.' }
 ];
+
+const mfaStyles = {
+  secretRow: { display: 'flex', gap: '8px', alignItems: 'center' },
+  secret: {
+    flex: 1,
+    padding: '8px 10px',
+    border: '1px solid var(--line)',
+    borderRadius: '7px',
+    background: 'var(--surface-2)',
+    fontSize: '12px',
+    letterSpacing: '0.08em',
+    wordBreak: 'break-all'
+  },
+  help: { color: 'var(--ink-3)', fontSize: '9.5px', lineHeight: 1.4 },
+  codes: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: '6px', margin: '4px 0 14px' },
+  code: {
+    padding: '6px 8px',
+    border: '1px solid var(--line)',
+    borderRadius: '6px',
+    background: 'var(--surface-2)',
+    fontSize: '11.5px',
+    letterSpacing: '0.06em',
+    textAlign: 'center'
+  }
+};
+
+async function copyText(value) {
+  try {
+    await navigator.clipboard.writeText(String(value));
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
 
 const EMPTY_MEMBER = { email: '', fullName: '', company: '', role: 'viewer', password: '' };
 
@@ -1003,6 +1224,152 @@ const teamStyles = {
   legendItem: { display: 'flex', gap: '10px', alignItems: 'baseline', fontSize: '10.5px', color: 'var(--ink-3)' }
 };
 
+// Two-factor status and enrolment for the signed-in account. Administrators are required to
+// keep it on, so this card explains that instead of offering a switch that would refuse.
+function TwoFactorPanel({ token }) {
+  const [status, setStatus] = useState(null);
+  const [enrollment, setEnrollment] = useState(null);
+  const [code, setCode] = useState('');
+  const [codes, setCodes] = useState(null);
+  const [problem, setProblem] = useState('');
+  const [done, setDone] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const headers = { Authorization: `Bearer ${token}` };
+
+  const load = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/auth/mfa`, { headers });
+      setStatus(response.data);
+    } catch (err) {
+      setProblem(err.response?.data?.error || 'Could not read the two-factor status.');
+    }
+  };
+
+  useEffect(() => { load(); }, [token]);
+
+  const start = async () => {
+    setProblem('');
+    setDone('');
+    setCodes(null);
+    try {
+      const response = await axios.post(`${API_URL}/auth/mfa/setup`, {}, { headers });
+      setEnrollment(response.data);
+    } catch (err) {
+      setProblem(err.response?.data?.error || 'Could not start the setup. Try again.');
+    }
+  };
+
+  const confirm = async (event) => {
+    event.preventDefault();
+    setProblem('');
+    setBusy(true);
+    try {
+      const response = await axios.post(`${API_URL}/auth/mfa/enable`, { code }, { headers });
+      setCodes(response.data.recoveryCodes || []);
+      setEnrollment(null);
+      setCode('');
+      setDone('Two-factor is on for this account.');
+      await load();
+    } catch (err) {
+      setProblem(err.response?.data?.error || 'That code was not accepted. Wait for the next one.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <div className="panel-head-copy">
+          <h3>Two-factor authentication</h3>
+          <p>{status ? (status.enabled ? 'On for this account.' : 'Off.') : 'Checking…'}</p>
+        </div>
+        <span className="panel-eyebrow">{status && status.requiredForRole ? 'Required' : 'Optional'}</span>
+      </div>
+      <div className="panel-body">
+        {problem && (
+          <div className="section-note" role="alert" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: '#ecc9c4', marginBottom: 12 }}>
+            <Icon name="alert" size={13} /> {problem}
+          </div>
+        )}
+        {done && (
+          <div className="section-note" role="status" style={{ color: 'var(--signal-strong)', background: 'var(--signal-soft)', borderColor: '#b9ddcd', marginBottom: 12 }}>
+            <Icon name="checkCircle" size={13} /> {done}
+          </div>
+        )}
+
+        {status && status.enabled && (
+          <p className="helper" style={{ marginTop: 0 }}>
+            {status.recoveryCodesLeft} recovery code{status.recoveryCodesLeft === 1 ? '' : 's'} left.
+            A code works once, if you lose your phone.
+            {status.requiredForRole ? ' Administrators must keep this on.' : ''}
+          </p>
+        )}
+
+        {codes && (
+          <div style={{ marginBottom: 12 }}>
+            <div className="helper" style={{ marginTop: 0 }}>Save these now — they will not be shown again.</div>
+            <div style={mfaStyles.codes}>
+              {codes.map(value => <code key={value} style={mfaStyles.code}>{value}</code>)}
+            </div>
+            <button type="button" className="btn btn-sm" onClick={() => copyText(codes.join('\n'))}>
+              Copy all codes
+            </button>
+          </div>
+        )}
+
+        {enrollment ? (
+          <form onSubmit={confirm}>
+            <div className="field">
+              <label>Setup key for {enrollment.account}</label>
+              <div style={mfaStyles.secretRow}>
+                <code style={mfaStyles.secret}>{enrollment.secret}</code>
+                <button type="button" className="btn btn-sm" onClick={() => copyText(enrollment.secret)}>Copy</button>
+              </div>
+              <span style={mfaStyles.help}>
+                Add it to your authenticator app as a time-based key, then type the 6-digit code here.
+              </span>
+            </div>
+            <div className="field" style={{ marginTop: 12 }}>
+              <label htmlFor="account-mfa-code">Code from the app</label>
+              <input
+                id="account-mfa-code"
+                className="input"
+                type="text"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={11}
+                placeholder="123 456"
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                required
+              />
+            </div>
+            <div className="form-actions">
+              <button type="submit" className="btn btn-primary" disabled={busy}>
+                {busy ? 'Checking…' : 'Turn on two-factor'}
+              </button>
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setEnrollment(null); setProblem(''); }}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        ) : (
+          !codes && (!status || !status.enabled) && (
+            <div className="form-actions" style={{ marginTop: 0 }}>
+              <button type="button" className="btn btn-primary" onClick={start}>
+                <Icon name="shield" size={13} /> Set up two-factor
+              </button>
+              <span className="toolbar-note">Needs an authenticator app on your phone.</span>
+            </div>
+          )
+        )}
+      </div>
+    </section>
+  );
+}
+
 function AccountScreen({ token }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -1158,6 +1525,8 @@ function AccountScreen({ token }) {
         </section>
 
         <div className="stack">
+          <TwoFactorPanel token={token} />
+
           <section className="panel">
             <div className="panel-head">
               <div className="panel-head-copy"><h3>Password requirements</h3><p>{metChecks} of {passwordChecks.length} met.</p></div>

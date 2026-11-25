@@ -13,6 +13,8 @@ const { calculateEarthworksVolumes } = require('./earthworks');
 const { createAiModule } = require('./ai');
 const { emailDeliveryChannel, sendPasswordResetEmail } = require('./email');
 const { createStorage } = require('./storage');
+const totp = require('./totp');
+const mfa = require('./mfa');
 const {
   CONTROL_POINT_STATUSES,
   INITIAL_CONTROL_POINT_STATUSES,
@@ -313,6 +315,16 @@ const resetLimiter = rateLimit({
   standardHeaders: 'draft-7',
   legacyHeaders: false,
   message: { error: 'Too many attempts. Please wait an hour and request a new link.' }
+});
+
+// Six digits are guessable given unlimited tries, so the second step is capped as tightly as
+// the password step.
+const mfaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many code attempts. Please wait 15 minutes and try again.' }
 });
 
 // The limiter above works per network address. Someone with a pool of addresses
@@ -729,6 +741,23 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
 
     clearAccountFailures(cleanEmail);
 
+    // A correct password is the first factor, not a session. An account with an authenticator
+    // gets a short-lived challenge; a role that must use one but has not enrolled yet gets a
+    // session that can do nothing but finish the setup.
+    const role = normaliseRole(user.role);
+    const twoFactor = await mfa.getState(pool, user.id);
+    const mfaSwitchedOff = mfa.disabledByEnv();
+
+    if (!mfaSwitchedOff && twoFactor && twoFactor.enabled) {
+      const challenge = jwt.sign({ userId: user.id, mfa: 'challenge' }, JWT_SECRET, { expiresIn: '5m' });
+      return res.json({ success: true, mfaRequired: true, challenge, method: 'totp' });
+    }
+
+    if (!mfaSwitchedOff && mfa.mfaRequiredFor(role)) {
+      const setupToken = jwt.sign({ userId: user.id, mfa: 'setup' }, JWT_SECRET, { expiresIn: '15m' });
+      return res.json({ success: true, mfaSetupRequired: true, token: setupToken });
+    }
+
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({
@@ -760,6 +789,9 @@ function normaliseRole(value) {
 // Signed-in actions that are not project edits: any account may do these.
 const SELF_SERVICE_PATHS = new Set(['/auth/change-password', '/api/ai/chat']);
 
+// A password-only session during forced enrolment may reach exactly the setup, nothing else.
+const MFA_SETUP_PATHS = new Set(['/auth/mfa', '/auth/mfa/setup', '/auth/mfa/enable']);
+
 function requiredRoleFor(req) {
   if (SELF_SERVICE_PATHS.has(req.path)) return 'viewer';
   if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return 'viewer';
@@ -789,6 +821,13 @@ async function verifyToken(req, res, next) {
         code: 'insufficient_role',
         role,
         requiredRole: needed
+      });
+    }
+
+    if (decoded.mfa === 'setup' && !MFA_SETUP_PATHS.has(req.path)) {
+      return res.status(403).json({
+        error: 'Finish setting up two-factor authentication to continue.',
+        code: 'mfa_setup_required'
       });
     }
 
@@ -829,6 +868,179 @@ function requireAdmin(req, res, next) {
 // ==================== TEAM ACCESS ====================
 // Who am I, and what may I do? Used by the interface to show or hide an action before
 // the request is attempted - the API is what actually refuses it.
+// ==================== TWO-FACTOR ====================
+// The second step of an administrator sign-in: the password check hands back a challenge,
+// and only a current code from the authenticator app (or a recovery code) becomes a session.
+
+app.post('/auth/login/mfa', mfaLimiter, async (req, res) => {
+  try {
+    const { challenge, code } = req.body || {};
+    if (!challenge) return res.status(400).json({ error: 'Start the sign-in again.' });
+    if (typeof code !== 'string' || !code.trim()) {
+      return res.status(400).json({ error: 'Enter the code from your authenticator app.' });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(challenge, JWT_SECRET);
+    } catch (err) {
+      return res.status(401).json({ error: 'That sign-in took too long. Start again.' });
+    }
+    if (!decoded || decoded.mfa !== 'challenge') {
+      return res.status(401).json({ error: 'That sign-in is not valid. Start again.' });
+    }
+
+    const found = await pool.query('SELECT * FROM users WHERE id = $1', [decoded.userId]);
+    if (found.rows.length === 0) return res.status(401).json({ error: 'Invalid sign-in.' });
+
+    const user = found.rows[0];
+    const cleanEmail = String(user.email || '').toLowerCase();
+
+    // Wrong codes count against the same per-account lock as wrong passwords.
+    const lockedFor = accountLockRemainingMs(cleanEmail);
+    if (lockedFor > 0) {
+      const minutes = Math.max(1, Math.ceil(lockedFor / 60000));
+      res.set('Retry-After', String(Math.ceil(lockedFor / 1000)));
+      return res.status(429).json({
+        error: 'Too many failed sign-in attempts for this account. Try again in ' +
+          minutes + (minutes === 1 ? ' minute.' : ' minutes.')
+      });
+    }
+
+    const state = await mfa.getState(pool, user.id);
+    if (!state || !state.enabled || !state.secret) {
+      return res.status(400).json({ error: 'Two-factor is not set up on this account. Start the sign-in again.' });
+    }
+
+    let usedRecoveryCode = false;
+    let valid = totp.verifyCode(state.secret, code);
+    if (!valid) {
+      valid = await mfa.consumeRecoveryCode(pool, user.id, code);
+      usedRecoveryCode = valid;
+    }
+
+    if (!valid) {
+      recordAccountFailure(cleanEmail);
+      return res.status(401).json({ error: 'That code is not valid. Use the next one from your app.' });
+    }
+
+    clearAccountFailures(cleanEmail);
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({
+      success: true,
+      token,
+      usedRecoveryCode,
+      user: { id: user.id, email: user.email, fullName: user.full_name, role: normaliseRole(user.role) }
+    });
+  } catch (err) {
+    serverError(res, 'POST /auth/login/mfa', err);
+  }
+});
+
+// Where this account stands: the account screen shows it, and it tells the interface whether
+// enrolment is mandatory for the signed-in role.
+app.get('/auth/mfa', verifyToken, async (req, res) => {
+  try {
+    const state = await mfa.getState(pool, req.userId);
+    res.json({
+      enabled: Boolean(state && state.enabled),
+      requiredForRole: mfa.mfaRequiredFor(req.userRole),
+      recoveryCodesLeft: state && state.enabled ? await mfa.recoveryCodesLeft(pool, req.userId) : 0
+    });
+  } catch (err) {
+    serverError(res, 'GET /auth/mfa', err);
+  }
+});
+
+// A fresh key, stored but not yet switched on: the person proves it works with the next code.
+app.post('/auth/mfa/setup', verifyToken, async (req, res) => {
+  try {
+    const state = await mfa.getState(pool, req.userId);
+    if (state && state.enabled) {
+      return res.status(400).json({ error: 'Two-factor is already on for this account.' });
+    }
+
+    const secret = totp.generateSecret();
+    await mfa.startEnrollment(pool, req.userId, secret);
+
+    res.json({
+      secret,
+      account: (state && state.email) || '',
+      otpauth: totp.otpauthUrl({ secret, label: (state && state.email) || 'account' }),
+      issuer: 'SiteTrackerPro',
+      digits: totp.DIGITS,
+      period: totp.STEP_SECONDS
+    });
+  } catch (err) {
+    serverError(res, 'POST /auth/mfa/setup', err);
+  }
+});
+
+app.post('/auth/mfa/enable', verifyToken, async (req, res) => {
+  try {
+    const code = (req.body || {}).code;
+    const state = await mfa.getState(pool, req.userId);
+    if (!state || !state.secret) {
+      return res.status(400).json({ error: 'Start the setup again — no key is stored for this account.' });
+    }
+    if (state.enabled) return res.status(400).json({ error: 'Two-factor is already on for this account.' });
+
+    if (!totp.verifyCode(state.secret, code)) {
+      return res.status(400).json({ error: 'That code is not valid yet. Wait for the next one and try again.' });
+    }
+
+    const recoveryCodes = totp.generateRecoveryCodes();
+    await mfa.enableTotp(pool, req.userId, recoveryCodes.map(totp.hashRecoveryCode));
+
+    // The session that set this up is upgraded here, so nobody has to sign in twice.
+    const token = jwt.sign({ userId: req.userId }, JWT_SECRET, { expiresIn: '7d' });
+    const me = await pool.query('SELECT id, email, full_name, role FROM users WHERE id = $1', [req.userId]);
+    const user = me.rows[0];
+
+    console.log('[' + new Date().toISOString() + '] Two-factor enabled for user ' + req.userId + ' (' + user.email + ')');
+
+    res.json({
+      success: true,
+      token,
+      recoveryCodes,
+      user: { id: user.id, email: user.email, fullName: user.full_name, role: normaliseRole(user.role) }
+    });
+  } catch (err) {
+    serverError(res, 'POST /auth/mfa/enable', err);
+  }
+});
+
+// Turning it off needs the password and a current code, and is refused while the role is
+// required to use it — otherwise the next sign-in would lock the account out.
+app.post('/auth/mfa/disable', verifyToken, async (req, res) => {
+  try {
+    const { password, code } = req.body || {};
+    const state = await mfa.getState(pool, req.userId);
+    if (!state || !state.enabled) return res.status(400).json({ error: 'Two-factor is not on for this account.' });
+
+    if (mfa.mfaRequiredFor(req.userRole)) {
+      return res.status(403).json({
+        error: 'Two-factor is required for ' + req.userRole +
+          ' accounts. Set MFA_REQUIRED_ROLES=none in the service environment to turn the rule off.'
+      });
+    }
+
+    const found = await pool.query('SELECT password FROM users WHERE id = $1', [req.userId]);
+    if (!await bcrypt.compare(String(password || ''), found.rows[0].password)) {
+      return res.status(401).json({ error: 'Current password is incorrect.' });
+    }
+
+    const valid = totp.verifyCode(state.secret, code) || await mfa.consumeRecoveryCode(pool, req.userId, code);
+    if (!valid) return res.status(400).json({ error: 'Enter a current code (or a recovery code) to turn it off.' });
+
+    await mfa.disableTotp(pool, req.userId);
+    res.json({ success: true, message: 'Two-factor authentication is off.' });
+  } catch (err) {
+    serverError(res, 'POST /auth/mfa/disable', err);
+  }
+});
+
 app.get('/auth/me', verifyToken, async (req, res) => {
   try {
     const result = await pool.query(
@@ -2526,6 +2738,9 @@ async function ensureSchema() {
     )
   `);
   await pool.query('CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id, created_at DESC)');
+
+  // Second factor: the users columns and the recovery-code table, added on older databases.
+  await mfa.ensureMfaSchema(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS project_material_rates (

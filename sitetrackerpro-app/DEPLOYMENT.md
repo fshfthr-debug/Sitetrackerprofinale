@@ -59,6 +59,26 @@ npm run users -- create --email you@example.com --role admin
 
 A password set this way also retires any reset link that was mailed before it.
 
+### Two-factor authentication for administrators
+
+Administrator accounts sign in with a password **and** a 6-digit code from an authenticator app.
+Nothing outside the app is needed: no SMS, no paid provider, no extra keys.
+
+- On the first sign-in after this was deployed, an administrator is sent to a setup screen: add the
+  key to Google Authenticator, Authy, 1Password or Microsoft Authenticator, type the code, and save
+  the ten recovery codes shown. Until that is done, the password-only session can reach nothing but
+  the setup screen.
+- `MFA_REQUIRED_ROLES` decides who must use a second factor. It defaults to `admin`; use
+  `admin,analyst` to widen it, or `none` to turn the rule off for accounts that have not enrolled.
+- A recovery code works once, in the same box as the 6-digit code.
+- Wrong codes count towards the same 15-minute, five-failure lock as wrong passwords.
+- **Lost the phone and the recovery codes?** Set `MFA_DISABLED=true` in the service environment
+  and save. The service restarts, sign-in ignores the second factor, and you can then set up the new
+  device from **Account** — then remove the variable and save again. Resetting the password from
+  the shell is not enough on its own: it does not clear an enrolled authenticator.
+  Anyone who can set that variable can also read `DATABASE_URL`, so it grants no access that the
+  environment panel did not already give.
+
 Plain HTTP means passwords travel in clear text. Use HTTPS (section 7) for anything beyond
 your own machine.
 
