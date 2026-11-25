@@ -43,27 +43,51 @@ class DwgError extends Error {
 
 let availability = null;
 
-/** Is a usable dwg2dxf binary on this host? Cached per process. */
-async function converterAvailable(options = {}) {
-  const binary = options.binary || DEFAULTS.binary;
-  if (availability && availability.binary === binary) return availability.available;
+/**
+ * Probe the binary once per process. `dwg2dxf --version` is the smallest thing that proves the
+ * executable exists, finds its shared library and can run at all - exactly what /health reports.
+ */
+async function probe(binary) {
+  if (availability && availability.binary === binary) return availability;
 
-  const available = await new Promise(resolve => {
+  const result = await new Promise(resolve => {
     let settled = false;
     const done = value => { if (!settled) { settled = true; resolve(value); } };
     let child;
     try {
-      child = spawn(binary, ['--version'], { stdio: 'ignore', timeout: 5000 });
+      child = spawn(binary, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 });
     } catch (err) {
-      return done(false);
+      return done({ available: false, version: null });
     }
-    child.on('error', () => done(false));
-    child.on('exit', code => done(code === 0 || code === 1)); // --version exits 0, unknown flag 1
-    setTimeout(() => { try { child.kill('SIGKILL'); } catch (err) { /* already gone */ } done(false); }, 5000);
+    let stdout = '';
+    child.stdout.on('data', chunk => { stdout = (stdout + chunk.toString('utf8')).slice(0, 200); });
+    child.on('error', () => done({ available: false, version: null }));
+    // --version exits 0, unknown flag 1
+    child.on('exit', code => done({ available: code === 0 || code === 1, version: stdout.trim().split('\n')[0] || null }));
+    setTimeout(() => { try { child.kill('SIGKILL'); } catch (err) { /* already gone */ } done({ available: false, version: null }); }, 5000);
   });
 
-  availability = { binary, available };
+  availability = { binary, ...result };
+  return availability;
+}
+
+/** Is a usable dwg2dxf binary on this host? Cached per process. */
+async function converterAvailable(options = {}) {
+  const { available } = await probe(options.binary || DEFAULTS.binary);
   return available;
+}
+
+/** What /health reports: whether conversion works here, which binary, and the limits in force. */
+async function converterStatus(options = {}) {
+  const binary = options.binary || DEFAULTS.binary;
+  const { available, version } = await probe(binary);
+  return {
+    enabled: available,
+    binary,
+    version,
+    timeoutSeconds: Math.round(DEFAULTS.timeoutMs / 1000),
+    memoryLimitMb: Math.round(DEFAULTS.memoryLimitKb / 1024)
+  };
 }
 
 function resetAvailabilityCache() {
@@ -174,6 +198,7 @@ async function convertDwg(buffer, options = {}) {
 module.exports = {
   convertDwg,
   converterAvailable,
+  converterStatus,
   resetAvailabilityCache,
   DwgError,
   DEFAULTS

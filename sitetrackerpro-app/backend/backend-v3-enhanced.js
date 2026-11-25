@@ -625,6 +625,7 @@ const gisModule = createGisModule({ app, pool, verifyToken, requireProjectAccess
 // DEM terrain (GeoTIFF upload, statistics, preview grid, derivatives).
 const createTerrainModule = require('./terrain');
 const { maptilerConfig } = require('./maptiler');
+const dwgConverter = require('./dwg');
 const terrainModule = createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR });
 
 // GIS workspaces and layers (saved map state and layer stacks).
@@ -2347,14 +2348,27 @@ app.get('/api/config', (req, res) => {
   });
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
   const maptiler = maptilerConfig(process.env);
+  // The DWG converter is a separate executable in the image. Probing it here is how an operator
+  // confirms the deployed image can actually convert, rather than trusting the build.
+  let dwg;
+  try {
+    dwg = await dwgConverter.converterStatus();
+  } catch (err) {
+    dwg = { enabled: false, binary: null, version: null, error: 'probe failed' };
+  }
   res.json({
     status: 'SiteTrackerPro v3.0 Enhanced - Backend Running',
     timestamp: new Date(),
     basemaps: {
       maptilerVector: maptiler.enabled,
       fallback: 'Esri World Street Map / Imagery / Topo / Dark + Light Gray'
+    },
+    cad: {
+      dwg,
+      dxfImport: true,
+      exportFormats: ['geojson', 'csv', 'dxf', 'kml', 'shp']
     }
   });
 });

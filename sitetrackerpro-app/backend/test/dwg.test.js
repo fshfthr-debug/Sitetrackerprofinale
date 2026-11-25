@@ -4,7 +4,7 @@ const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
 
-const { convertDwg, DwgError, DEFAULTS } = require('../dwg');
+const { convertDwg, converterStatus, resetAvailabilityCache, DwgError, DEFAULTS } = require('../dwg');
 
 const MINIMAL_DXF = [
   '0', 'SECTION', '2', 'ENTITIES',
@@ -41,6 +41,25 @@ test('convertDwg runs the converter as a separate process and returns its DXF', 
   assert.match(result.dxf, /LINE/);
   assert.equal(result.bytes, 21);
   assert.ok(result.durationMs >= 0);
+});
+
+test('converterStatus reports the binary and the limits in force', async () => {
+  const binary = await makeFakeConverter(WRITE_DXF);
+  resetAvailabilityCache();
+  const status = await converterStatus({ binary });
+  assert.equal(status.enabled, true);
+  assert.equal(status.binary, binary);
+  assert.match(status.version, /dwg2dxf/);
+  assert.equal(status.timeoutSeconds, Math.round(DEFAULTS.timeoutMs / 1000));
+  assert.equal(status.memoryLimitMb, Math.round(DEFAULTS.memoryLimitKb / 1024));
+});
+
+test('converterStatus reports disabled when the binary is missing', async () => {
+  resetAvailabilityCache();
+  const status = await converterStatus({ binary: '/nonexistent/dwg2dxf-does-not-exist' });
+  assert.equal(status.enabled, false);
+  assert.equal(status.version, null);
+  resetAvailabilityCache();
 });
 
 test('convertDwg reports "disabled" with 503 when the binary is missing', async () => {
