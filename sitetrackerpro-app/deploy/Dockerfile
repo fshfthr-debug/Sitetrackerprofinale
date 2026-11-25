@@ -2,6 +2,22 @@
 # One image: builds the React frontend, then serves it and the API from Express.
 # Build from the project root:  docker build -f deploy/Dockerfile .
 
+# ---------- stage 0: GNU LibreDWG (DWG -> DXF) ----------
+# GPL-3.0, used only as the separate `dwg2dxf` program. See
+# THIRD-PARTY-NOTICES-LIBREDWG.md for the pinned version and the source offer.
+ARG LIBREDWG_VERSION=0.13.3
+FROM node:20-alpine AS libredwg
+ARG LIBREDWG_VERSION
+RUN apk add --no-cache build-base autoconf automake libtool pkgconf perl file xz wget
+WORKDIR /src
+RUN wget -q "https://ftp.gnu.org/gnu/libredwg/libredwg-${LIBREDWG_VERSION}.tar.xz" \
+ && tar -xf "libredwg-${LIBREDWG_VERSION}.tar.xz" \
+ && cd "libredwg-${LIBREDWG_VERSION}" \
+ && ./configure --prefix=/usr/local --disable-bindings --disable-python \
+ && make -j"$(nproc)" \
+ && make install DESTDIR=/out \
+ && /out/usr/local/bin/dwg2dxf --version
+
 # ---------- stage 1: build the React app ----------
 FROM node:20-alpine AS frontend
 
@@ -19,15 +35,21 @@ ENV REACT_APP_API_URL=""
 RUN npm run build
 
 # ---------- stage 2: runtime ----------
-FROM node:20-alpine
+FROM node:20-alpine AS runtime
 
 ENV NODE_ENV=production
+ENV DWG2DXF_PATH=/usr/local/bin/dwg2dxf
 WORKDIR /app
+
+COPY --from=libredwg /out/usr/local/bin/dwg2dxf /usr/local/bin/dwg2dxf
+COPY --from=libredwg /out/usr/local/lib/libredwg.so* /usr/local/lib/
+RUN chmod 755 /usr/local/bin/dwg2dxf
 
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 COPY backend/ ./
+COPY THIRD-PARTY-NOTICES-LIBREDWG.md ./THIRD-PARTY-NOTICES-LIBREDWG.md
 
 # The backend already serves ./public as static files.
 COPY --from=frontend /app/build ./public

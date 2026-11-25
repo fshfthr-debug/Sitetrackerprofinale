@@ -15,6 +15,8 @@ const crypto = require('crypto');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const cadIo = require('./cad-io');
+const dxfReader = require('./dxf');
+const dwgConverter = require('./dwg');
 const {
   crsDefinition,
   listCrs,
@@ -428,7 +430,7 @@ function validateGeographic(featureCollection) {
 // File import/export helpers (GeoJSON and CSV). Files are parsed in memory; the same feature
 // limit as Overpass imports applies, and a CRS must be named explicitly.
 // ---------------------------------------------------------------------------
-const IMPORT_FORMATS = new Set(['geojson', 'csv', 'kml', 'shp', 'zip']);
+const IMPORT_FORMATS = new Set(['geojson', 'csv', 'kml', 'shp', 'zip', 'dxf']);
 // CAD exports can leave the map in the drawing's own projected CRS, which is what AutoCAD and
 // Civil 3D expect for a site plan. The API default stays the stored CRS.
 const EXPORT_FORMATS = new Set(['geojson', 'csv', 'dxf', 'kml', 'shp']);
@@ -1089,9 +1091,10 @@ module.exports = function createGisModule({
     const looksLikeZip = req.file.buffer.length > 4 && req.file.buffer.readUInt32LE(0) === 0x04034b50;
     const format = requestedFormat
       || (extension === 'kml' || extension === 'kmz' || looksLikeKml ? 'kml'
-        : extension === 'zip' || looksLikeZip ? 'zip'
-          : looksLikeJson ? 'geojson'
-            : 'csv');
+        : extension === 'dxf' || /^\s*0\s*\r?\n\s*SECTION/m.test(text.slice(0, 400)) ? 'dxf'
+          : extension === 'zip' || looksLikeZip ? 'zip'
+            : looksLikeJson ? 'geojson'
+              : 'csv');
 
     // KML is defined in WGS 84, so its CRS is not a user choice. Everything else must declare one:
     // inferring a projection from how large the numbers look is how site plans end up in the sea.
@@ -1102,7 +1105,20 @@ module.exports = function createGisModule({
     }
 
     let featureCollection;
-    if (format === 'kml') {
+    if (format === 'dxf') {
+      const parsed = dxfReader.parseDxf(text);
+      const drawable = parsed.featureCollection.features.filter(feature => feature.geometry
+        && ['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon'].includes(feature.geometry.type));
+      if (!drawable.length) {
+        const types = Object.keys(parsed.entityCounts).slice(0, 12).join(', ');
+        return res.status(400).json({
+          error: `No drawable entities were found in the DXF${types ? ` (it contains ${types})` : ''}. Points, lines, polylines, circles, arcs, text and block inserts are read.`
+        });
+      }
+      featureCollection = { type: 'FeatureCollection', features: drawable };
+      const problem = validateFeatureCollection(featureCollection, sourceCrs.code);
+      if (problem) return res.status(400).json({ error: problem });
+    } else if (format === 'kml') {
       featureCollection = cadIo.parseKml(text);
       if (!featureCollection.features.length) {
         return res.status(400).json({ error: 'No Placemarks with a Point, LineString or Polygon were found in the KML.' });
@@ -1141,7 +1157,7 @@ module.exports = function createGisModule({
     const name = String(req.body.name || req.file.originalname.replace(/\.[^.]+$/, '') || 'Imported dataset').trim().slice(0, 200)
       || 'Imported dataset';
     const bbox = collectionBbox(featureCollection);
-    const formatLabel = { geojson: 'GeoJSON', csv: 'CSV', kml: 'KML', zip: 'Shapefile', shp: 'Shapefile' }[format] || format;
+    const formatLabel = { geojson: 'GeoJSON', csv: 'CSV', kml: 'KML', zip: 'Shapefile', shp: 'Shapefile', dxf: 'DXF' }[format] || format;
     const source = `File import (${formatLabel})`;
     const history = [{
       at: new Date().toISOString(),
@@ -1464,6 +1480,60 @@ module.exports = function createGisModule({
       controlCount: features.filter(feature => !feature.properties.isBenchmark).length,
       count: features.length
     });
+  }));
+
+  // --------------------------------------------------------------------------- DWG import
+  // dwg2dxf (GNU LibreDWG, GPL-3.0) runs as a separate process with a timeout, a memory cap and
+  // a scratch directory; see backend/dwg.js and THIRD-PARTY-NOTICES-LIBREDWG.md. Nothing in this
+  // process links against it, and no request ever reaches a shell as text.
+  const cadUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).single('file');
+  const cadLimiter = limiter('cad-convert', 10, 'Too many DWG conversions in a minute. Wait a moment before trying again.');
+
+  app.get('/api/cad/status', verifyToken, asyncHandler(async (req, res) => {
+    const enabled = await dwgConverter.converterAvailable();
+    res.json({
+      enabled,
+      converter: 'GNU LibreDWG dwg2dxf',
+      licence: 'GPL-3.0 (separate process; see THIRD-PARTY-NOTICES-LIBREDWG.md)',
+      limits: {
+        maxInputBytes: dwgConverter.DEFAULTS.maxInputBytes,
+        timeoutMs: dwgConverter.DEFAULTS.timeoutMs
+      }
+    });
+  }));
+
+  app.post('/api/cad/convert', verifyToken, cadLimiter, (req, res, next) => {
+    cadUpload(req, res, err => {
+      if (err) {
+        const message = err.code === 'LIMIT_FILE_SIZE'
+          ? 'The drawing is larger than 20 MB.'
+          : `The upload could not be read: ${err.message}`;
+        return res.status(400).json({ error: message });
+      }
+      next();
+    });
+  }, asyncHandler(async (req, res) => {
+    if (!req.file || !req.file.buffer) {
+      return res.status(400).json({ error: 'Attach a .dwg file in the "file" field.' });
+    }
+
+    try {
+      const { dxf, durationMs } = await dwgConverter.convertDwg(req.file.buffer);
+      const parsed = dxfReader.parseDxf(dxf);
+      if (!parsed.entityCount) {
+        return res.status(422).json({ error: 'The drawing was converted but contains no points, lines or polygons to import.' });
+      }
+      const fileName = `${String(req.file.originalname || 'drawing').replace(/\.[^.]+$/, '').replace(/[^a-z0-9._-]+/gi, '-').toLowerCase() || 'drawing'}.dxf`;
+      res.setHeader('Content-Type', 'application/dxf; charset=utf-8');
+      res.setHeader('Content-Disposition', `inline; filename="${fileName}"`);
+      res.setHeader('X-Conversion-Ms', String(durationMs));
+      res.setHeader('X-Dxf-Entities', String(parsed.entityCount));
+      res.setHeader('X-Dxf-Layers', String(parsed.layers.length));
+      res.send(dxf);
+    } catch (err) {
+      if (err && err.code && err.status) return res.status(err.status).json({ error: err.message });
+      throw err;
+    }
   }));
 
   // Survey control points as CAD / interchange files. The table stores latitude and longitude,

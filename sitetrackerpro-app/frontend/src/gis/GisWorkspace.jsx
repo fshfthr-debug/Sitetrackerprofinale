@@ -1253,16 +1253,39 @@ export default function GisWorkspace({ token, projects }) {
 
   const importDataset = async () => {
     if (!importFile) {
-      setError('Choose a GeoJSON or CSV file to import.');
+      setError('Choose a file to import: GeoJSON, CSV, KML, zipped Shapefile, DXF or DWG.');
       return;
     }
     setImporting(true);
     setError('');
     setNotice('');
     try {
+      const lowerName = String(importFile.name || '').toLowerCase();
+      let fileToSend = importFile;
+      let explicitFormat = '';
+
+      if (lowerName.endsWith('.dwg')) {
+        // Native DWG: the server converts it with LibreDWG (a separate process with a timeout and
+        // a memory cap) and returns DXF, which then follows the same path as an uploaded DXF.
+        setBusy('Converting DWG drawing…');
+        const convertForm = new FormData();
+        convertForm.append('file', importFile);
+        const converted = await axios.post(`${API_URL}/api/cad/convert`, convertForm, {
+          headers: authHeaders,
+          responseType: 'text',
+          timeout: 90000
+        });
+        fileToSend = new File([converted.data], String(importFile.name).replace(/\.dwg$/i, '.dxf'), { type: 'application/dxf' });
+        explicitFormat = 'dxf';
+        setBusy('');
+      } else if (lowerName.endsWith('.dxf')) {
+        explicitFormat = 'dxf';
+      }
+
       const form = new FormData();
-      form.append('file', importFile);
+      form.append('file', fileToSend);
       form.append('crs', importCrs);
+      if (explicitFormat) form.append('format', explicitFormat);
       if (importName.trim()) form.append('name', importName.trim());
       const response = await axios.post(`${API_URL}/api/gis/datasets/${projectId}/import`, form, { headers: authHeaders });
       const imported = response.data;
@@ -1278,6 +1301,7 @@ export default function GisWorkspace({ token, projects }) {
     } catch (err) {
       setError(err.response?.data?.error || err.message);
     } finally {
+      setBusy('');
       setImporting(false);
     }
   };
@@ -2483,12 +2507,12 @@ export default function GisWorkspace({ token, projects }) {
                 )}
 
                 <div style={{ borderTop: '1px solid #eee', marginTop: '12px', paddingTop: '10px' }}>
-                  <label style={styles.helper}>Import dataset (GeoJSON, CSV, KML or zipped Shapefile)</label>
+                  <label style={styles.helper}>Import dataset (GeoJSON, CSV, KML, Shapefile, DXF or DWG)</label>
                   <input
                     id="gis-import-file"
                     ref={fileInputRef}
                     type="file"
-                    accept=".geojson,.json,.csv,.kml,.kmz,.zip,application/json,text/csv,application/vnd.google-earth.kml+xml,application/zip"
+                    accept=".geojson,.json,.csv,.kml,.kmz,.zip,.dxf,.dwg,application/json,text/csv,application/vnd.google-earth.kml+xml,application/zip,application/dxf,application/acad,image/vnd.dwg"
                     onChange={event => setImportFile(event.target.files && event.target.files[0] ? event.target.files[0] : null)}
                     style={{ fontSize: '12px', marginBottom: '6px', maxWidth: '100%' }}
                   />
@@ -2517,7 +2541,8 @@ export default function GisWorkspace({ token, projects }) {
                   <p style={{ ...styles.helper, fontSize: '11px' }}>
                     The source CRS must be stated; nothing is inferred from the file. CSV needs
                     lon/lat or easting/northing columns. KML is always WGS 84, so its CRS is set
-                    automatically. A zipped Shapefile is read from its .shp/.shx/.dbf set. Max
+                    automatically. A zipped Shapefile is read from its .shp/.shx/.dbf set. DWG is
+                    converted on the server to DXF, keeping layers, then read like a DXF. Max
                     {3000} features, 20 MB.
                   </p>
                 </div>
