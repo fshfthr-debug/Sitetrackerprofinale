@@ -12,7 +12,7 @@
  * labelled as preview-derived. They are visualization aids, never engineering surfaces.
  *
  * Mounted by backend-v3-enhanced.js:
- *   createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir })
+ *   createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir, storage })
  */
 
 const fs = require('fs');
@@ -23,6 +23,7 @@ const { PNG } = require('pngjs');
 const proj4 = require('proj4');
 const { fromFile } = require('geotiff');
 const { polygonsFrom, anyPolygonContains, polygonArea, computeCutFill } = require('./cut-fill');
+const { createStorage, createLocalStorage } = require('./storage');
 
 // ---------------------------------------------------------------------------
 // Limits. Everything a request can cost is bounded.
@@ -73,60 +74,18 @@ function haversineMetres(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-// ---------------------------------------------------------------------------
-// Storage adapter. This is the only code that knows where bytes live. Replacing it with an
-// S3-compatible driver later does not touch routes, metadata or the database.
-// ---------------------------------------------------------------------------
-function createLocalVolumeStorage(rootDir) {
-  const root = path.resolve(rootDir);
+// Storage lives in ./storage: the same adapter serves the S3 bucket when one is configured and
+// the uploads volume otherwise, so routes never branch on where a file happens to be.
+const createLocalVolumeStorage = createLocalStorage;
 
-  const absolute = key => {
-    const resolved = path.resolve(root, key);
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-      throw new Error('Storage key escapes the uploads volume.');
-    }
-    return resolved;
-  };
-
-  return {
-    driver: 'local-volume',
-    root,
-    absolute,
-    async putFromTemp(tempPath, key) {
-      const destination = absolute(key);
-      await fs.promises.mkdir(path.dirname(destination), { recursive: true });
-      await fs.promises.rename(tempPath, destination);
-      return key;
-    },
-    async writeBuffer(buffer, key) {
-      const destination = absolute(key);
-      await fs.promises.mkdir(path.dirname(destination), { recursive: true });
-      await fs.promises.writeFile(destination, buffer);
-      return key;
-    },
-    async readBuffer(key) {
-      return fs.promises.readFile(absolute(key));
-    },
-    async size(key) {
-      return (await fs.promises.stat(absolute(key))).size;
-    },
-    async sha256(key) {
-      return new Promise((resolve, reject) => {
-        const hash = crypto.createHash('sha256');
-        fs.createReadStream(absolute(key))
-          .on('data', chunk => hash.update(chunk))
-          .on('end', () => resolve(hash.digest('hex')))
-          .on('error', reject);
-      });
-    },
-    async remove(key) {
-      try {
-        await fs.promises.unlink(absolute(key));
-      } catch (err) {
-        if (err.code !== 'ENOENT') throw err;
-      }
-    }
-  };
+async function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    fs.createReadStream(filePath)
+      .on('data', chunk => hash.update(chunk))
+      .on('end', () => resolve(hash.digest('hex')))
+      .on('error', reject);
+  });
 }
 
 // TIFF signatures: classic little/big endian and BigTIFF.
@@ -336,6 +295,7 @@ module.exports = function createTerrainModule({
   verifyToken,
   requireProjectAccess,
   uploadDir,
+  storage: providedStorage,
   serverError = (res, where, err) => {
     console.error(`${where} failed:`, err.message || err);
     if (!res.headersSent) res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
@@ -346,9 +306,9 @@ module.exports = function createTerrainModule({
   }
 }) {
   const asyncHandler = fn => (req, res) => fn(req, res).catch(err => serverError(res, `${req.method} ${req.path}`, err));
-  const storage = createLocalVolumeStorage(uploadDir || path.join(__dirname, 'uploads'));
+  const storage = providedStorage || createStorage({ rootDir: uploadDir || path.join(__dirname, 'uploads') });
 
-  const tempDir = path.join(storage.root, 'terrain', 'tmp');
+  const tempDir = path.join(storage.root || uploadDir || path.join(__dirname, 'uploads'), 'terrain', 'tmp');
   fs.mkdirSync(tempDir, { recursive: true });
 
   const terrainUpload = multer({
@@ -450,8 +410,8 @@ module.exports = function createTerrainModule({
     const tempPath = req.file.path;
     const projectId = Number(req.projectId);
     const originalName = String(req.file.originalname || 'dem.tif').slice(0, 255);
-    const key = `terrain/${projectId}/${crypto.randomUUID()}.tif`;
-    const previewKey = key.replace(/\.tif$/, '.preview.f32');
+    const key = storage.objectKey({ projectId, category: 'terrain', filename: originalName });
+    const previewKey = `${key}.preview.f32`;
 
     let created = null;
 
@@ -500,11 +460,15 @@ module.exports = function createTerrainModule({
         [projectId, originalName, key, previewKey, size, JSON.stringify([{ at: new Date().toISOString(), action: 'upload', fileBytes: size }])]
       )).rows[0];
 
-      await storage.putFromTemp(tempPath, key);
+      await storage.putFromTemp(tempPath, key, { contentType: 'image/tiff' });
+
+      // Local storage moved the staged upload into place; remote storage still has it locally,
+      // so the raster is parsed without downloading the object back from the bucket.
+      const localOriginal = storage.localPath(key) || tempPath;
 
       let tiff;
       try {
-        tiff = await fromFile(storage.absolute(key));
+        tiff = await fromFile(localOriginal);
       } catch (err) {
         return fail(422, `The GeoTIFF could not be read: ${err.message}`);
       }
@@ -618,7 +582,7 @@ module.exports = function createTerrainModule({
       for (let i = 0; i < grid.length; i += 1) previewBuffer.writeFloatLE(grid[i], i * 4);
       await storage.writeBuffer(previewBuffer, previewKey);
 
-      const sha256 = await storage.sha256(key);
+      const sha256 = await sha256File(localOriginal);
       const history = [
         { at: new Date().toISOString(), action: 'upload', fileBytes: size },
         {
@@ -649,6 +613,9 @@ module.exports = function createTerrainModule({
           previewWidth, previewHeight, JSON.stringify(history)
         ]
       );
+
+      // The staged upload has served its purpose (local storage already removed it by rename).
+      await fs.promises.unlink(tempPath).catch(() => {});
 
       res.status(201).json({
         success: true,
@@ -814,7 +781,11 @@ module.exports = function createTerrainModule({
     const results = [];
 
     if (points.rows.length > 0) {
-      const tiff = await fromFile(storage.absolute(row.storage_key));
+      // A remote GeoTIFF is fetched once into a temporary file for the row-by-row reads below;
+      // local storage hands back the stored file directly. Cleanup is a no-op locally.
+      const original = await storage.materialise(row.storage_key);
+      try {
+      const tiff = await fromFile(original.path);
       const image = await tiff.getImage();
 
       for (const point of points.rows) {
@@ -878,6 +849,9 @@ module.exports = function createTerrainModule({
             : 'difference = benchmark − DEM. Nothing has been shifted or corrected.'
         });
       }
+      } finally {
+        await original.cleanup();
+      }
     }
 
     const compared = results.filter(item => item.status === 'compared');
@@ -920,17 +894,22 @@ module.exports = function createTerrainModule({
   const clampIndex = (value, max) => Math.max(0, Math.min(max, value));
 
   async function readGridWindow(storageKey, window, width, height, resampleMethod) {
-    const tiff = await fromFile(storage.absolute(storageKey));
-    const image = await tiff.getImage();
-    const rasters = await image.readRasters({
-      window,
-      width,
-      height,
-      samples: [0],
-      interleave: false,
-      resampleMethod
-    });
-    return rasters[0];
+    const original = await storage.materialise(storageKey);
+    try {
+      const tiff = await fromFile(original.path);
+      const image = await tiff.getImage();
+      const rasters = await image.readRasters({
+        window,
+        width,
+        height,
+        samples: [0],
+        interleave: false,
+        resampleMethod
+      });
+      return rasters[0];
+    } finally {
+      await original.cleanup();
+    }
   }
 
   app.post('/api/projects/:id/terrain/cut-fill', verifyToken, requireProjectAccess(req => req.params.id), asyncHandler(async (req, res) => {

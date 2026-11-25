@@ -12,6 +12,7 @@ const helmet = require('helmet');
 const { calculateEarthworksVolumes } = require('./earthworks');
 const { createAiModule } = require('./ai');
 const { emailDeliveryChannel, sendPasswordResetEmail } = require('./email');
+const { createStorage } = require('./storage');
 const {
   CONTROL_POINT_STATUSES,
   INITIAL_CONTROL_POINT_STATUSES,
@@ -135,6 +136,12 @@ if (process.env.TRUST_PROXY !== 'false') {
 // multer fails every upload when its destination is missing.
 const UPLOAD_DIR = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, 'uploads'));
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// Binary uploads (BIM models, DEM GeoTIFFs) go to S3-compatible object storage when S3_BUCKET
+// is configured, and stay on the uploads volume otherwise. Multer always stages the request on
+// this disk first, so a large upload is streamed to the bucket rather than buffered in memory.
+const storage = createStorage({ rootDir: UPLOAD_DIR });
+console.log('📦 Storage: ' + storage.describe());
 
 const upload = multer({ 
   dest: UPLOAD_DIR,
@@ -620,13 +627,13 @@ async function withTransaction(work) {
 // ==================== GIS & GEOSPATIAL INTELLIGENCE ====================
 // Routes live in gis.js (OpenStreetMap/Overpass, datasets, CRS transforms, georeferencing).
 const createGisModule = require('./gis');
-const gisModule = createGisModule({ app, pool, verifyToken, requireProjectAccess });
+const gisModule = createGisModule({ app, pool, verifyToken, requireProjectAccess, storage });
 
 // DEM terrain (GeoTIFF upload, statistics, preview grid, derivatives).
 const createTerrainModule = require('./terrain');
 const { maptilerConfig } = require('./maptiler');
 const dwgConverter = require('./dwg');
-const terrainModule = createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR });
+const terrainModule = createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR, storage });
 
 // GIS workspaces and layers (saved map state and layer stacks).
 const createGisWorkspaceModule = require('./gis-workspaces');
@@ -634,7 +641,7 @@ const gisWorkspaceModule = createGisWorkspaceModule({ app, pool, verifyToken, re
 
 // Spatial analysis is its own module: it only reads datasets and writes derived datasets.
 const createGisAnalysisModule = require('./gis-analysis');
-const gisAnalysisModule = createGisAnalysisModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR });
+const gisAnalysisModule = createGisAnalysisModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR, storage });
 
 // ==================== AUTHENTICATION ENDPOINTS ====================
 
@@ -1197,6 +1204,16 @@ app.delete('/api/projects/:id', verifyToken, async (req, res) => {
       await client.query('DELETE FROM projects WHERE id = $1 AND user_id = $2', [existing.rows[0].id, req.userId]);
     });
 
+    // The database rows are gone; the uploaded models, DEMs and previews go with them. Failure
+    // here is logged rather than failing the request: the project is already deleted, and a
+    // retry would only hit 404. Objects can then be swept from the bucket by prefix.
+    try {
+      const removed = await storage.removeProject(existing.rows[0].id);
+      if (removed) console.log(`🧹 Removed ${removed} stored object(s) for project ${existing.rows[0].id}`);
+    } catch (err) {
+      console.warn(`Storage cleanup for deleted project ${existing.rows[0].id} failed:`, err.message || err);
+    }
+
     res.json({ success: true, deleted: { id: existing.rows[0].id, name: existing.rows[0].name } });
   } catch (err) {
     serverError(res, 'DELETE /api/projects/:id', err);
@@ -1208,29 +1225,58 @@ app.delete('/api/projects/:id', verifyToken, async (req, res) => {
 // Import a BIM model / take-off file: stores the upload, then parses it into
 // bim_components so quantity survey, BOM and the 3D viewer have real rows.
 app.post('/api/bim/import', verifyToken, upload.single('file'), async (req, res) => {
+  // Multer has already staged the upload on disk. Every exit path either moves it into storage
+  // or deletes it, so a rejected request never leaves a stray file behind.
+  const discardStaged = () => (req.file ? fs.promises.unlink(req.file.path).catch(() => {}) : Promise.resolve());
+  let storedKey = null;
+  let modelSaved = false;
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded (send it as the "file" field).' });
     }
 
-    const { projectId } = req.body;
+    const projectId = Number(req.body.projectId);
 
-    if (!projectId) {
+    if (!req.body.projectId) {
+      await discardStaged();
       return res.status(400).json({ error: 'projectId is required' });
     }
 
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      await discardStaged();
+      return res.status(400).json({ error: 'projectId must be a project id.' });
+    }
+
     if (!(await userOwnsProject(req.userId, projectId))) {
+      await discardStaged();
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    const modelResult = await pool.query(
-      'INSERT INTO bim_models (project_id, file_name, file_path, file_type) VALUES ($1, $2, $3, $4) RETURNING *',
-      [projectId, req.file.originalname, req.file.path, req.file.mimetype]
+    const originalName = String(req.file.originalname || 'model.bin').slice(0, 255);
+    storedKey = await storage.putFromTemp(
+      req.file.path,
+      storage.objectKey({ projectId, category: 'models', filename: originalName }),
+      { contentType: req.file.mimetype }
     );
 
-    const extension = path.extname(req.file.originalname || '').toLowerCase();
+    let modelResult;
+    try {
+      modelResult = await pool.query(
+        'INSERT INTO bim_models (project_id, file_name, file_path, file_type) VALUES ($1, $2, $3, $4) RETURNING *',
+        [projectId, originalName, storedKey, req.file.mimetype]
+      );
+      modelSaved = true;
+    } catch (err) {
+      // No row, no object: never leave an orphaned upload in the bucket.
+      await storage.remove(storedKey).catch(() => {});
+      throw err;
+    }
+
+    const extension = path.extname(originalName).toLowerCase();
 
     if (!SUPPORTED_TAKEOFF_EXTENSIONS.includes(extension)) {
+      await discardStaged();
       return res.status(415).json({
         success: false,
         model: modelResult.rows[0],
@@ -1239,7 +1285,10 @@ app.post('/api/bim/import', verifyToken, upload.single('file'), async (req, res)
       });
     }
 
-    const text = await fs.promises.readFile(req.file.path, 'utf8');
+    // Local storage has already moved the staged file into place; remote storage still has it.
+    const sourcePath = storage.localPath(storedKey) || req.file.path;
+    const text = await fs.promises.readFile(sourcePath, 'utf8');
+    await discardStaged();
     const { components, errors } = rowsToComponents(parseDelimited(text));
     const inserted = await insertComponents(projectId, components);
 
@@ -1255,6 +1304,10 @@ app.post('/api/bim/import', verifyToken, upload.single('file'), async (req, res)
       components: inserted
     });
   } catch (err) {
+    // Keep the object when its bim_models row exists; only an object whose row never landed is
+    // an orphan.
+    if (storedKey && !modelSaved) await storage.remove(storedKey).catch(() => {});
+    await discardStaged();
     serverError(res, req.method + ' ' + req.path, err);
   }
 });
@@ -2369,6 +2422,11 @@ app.get('/health', async (req, res) => {
       dwg,
       dxfImport: true,
       exportFormats: ['geojson', 'csv', 'dxf', 'kml', 'shp']
+    },
+    storage: {
+      driver: storage.driver,
+      durable: storage.isRemote,
+      bucket: storage.isRemote ? storage.bucket : null
     }
   });
 });

@@ -26,15 +26,19 @@ Three things are not optional:
    characters, not the example value, not a repeated pattern. That is deliberate — this key
    signs every login, so a known value lets anybody mint a token for any account. Generate it
    with `openssl rand -hex 32` and keep it stable: changing it logs everybody out.
-2. **Keep uploads on a volume.** Imported BIM/take-off files are written to `uploads/` on
-   local disk. On a service with an ephemeral disk (Render, Railway, Fly) they disappear on
-   every deploy. Routes B and C mount a volume; route D warns you.
+2. **Keep uploads durable.** Imported BIM/take-off files and DEM GeoTIFFs are written to
+   `uploads/` on local disk by default, so on a service with an ephemeral disk (Render,
+   Railway, Fly) they disappear on every deploy. Set `S3_BUCKET`, `S3_ENDPOINT`,
+   `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` (S3-compatible storage, e.g. Supabase
+   Storage) and the same files go to the bucket instead — surviving restarts and deploys.
+   Routes B and C mount a volume; route D warns you. See `backend/.env.example`.
 3. **Know what is protected and what is still open.** Built in: rate limiting on sign-in
    (10 failed attempts per IP per 15 minutes) and registration (10 per hour), generic error
    messages, a 12-character password policy, a `JWT_SECRET` startup guard, a CORS allow-list
    driven by `CORS_ORIGIN`, and standard security headers from helmet (CSP, HSTS, no framing,
-   no `X-Powered-By`). Still open from the review (§3.3): no audit trail, login tokens live in
-   browser storage for 7 days, and uploads land on local disk.
+   no `X-Powered-By`). Still open from the review (§3.3): no audit trail and login tokens live
+   in browser storage for 7 days. Uploads stay on local disk unless object storage is
+   configured.
 
 Plain HTTP means passwords travel in clear text. Use HTTPS (section 7) for anything beyond
 your own machine.

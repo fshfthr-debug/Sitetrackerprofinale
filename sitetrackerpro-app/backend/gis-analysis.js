@@ -126,6 +126,7 @@ module.exports = function createGisAnalysisModule({
   verifyToken,
   requireProjectAccess,
   uploadDir,
+  storage,
   serverError = (res, where, err) => {
     console.error(`${where} failed:`, err.message || err);
     if (!res.headersSent) res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
@@ -500,10 +501,13 @@ module.exports = function createGisAnalysisModule({
       }
       workingCrs = surveyCrs;
 
-      const previewPath = path.join(uploadDir || path.join(__dirname, 'uploads'), survey.preview_key);
       let buffer;
       try {
-        buffer = await fs.promises.readFile(previewPath);
+        // The preview grid lives beside the DEM: in object storage when configured, otherwise
+        // on the uploads volume.
+        buffer = storage
+          ? await storage.readBuffer(survey.preview_key)
+          : await fs.promises.readFile(path.join(uploadDir || path.join(__dirname, 'uploads'), survey.preview_key));
       } catch (err) {
         return res.status(409).json({ error: 'The survey preview grid is not available on this server.' });
       }

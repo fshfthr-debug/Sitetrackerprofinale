@@ -18,6 +18,7 @@ const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const cadIo = require('./cad-io');
 const dxfReader = require('./dxf');
+const { createStorage, isStorageNotFound } = require('./storage');
 const dwgConverter = require('./dwg');
 const placementModule = require('./gis-placement');
 const {
@@ -569,6 +570,8 @@ module.exports = function createGisModule({
   pool,
   verifyToken,
   requireProjectAccess,
+  // The app storage handles remote (S3-compatible) and local uploads alike.
+  storage,
   // Defaults keep integration into an existing backend small: only the four arguments
   // above are required. An installation that has its own helpers can pass them in.
   serverError = (res, where, err) => {
@@ -581,6 +584,9 @@ module.exports = function createGisModule({
   }
 }) {
   const asyncHandler = fn => (req, res) => fn(req, res).catch(err => serverError(res, `${req.method} ${req.path}`, err));
+  const fileStorage = storage || createStorage({
+    rootDir: process.env.UPLOAD_DIR || path.join(__dirname, 'uploads')
+  });
   // Uploads are parsed in memory: the features are validated and stored as JSONB, and the
   // original file is not kept on disk.
   const importUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } }).single('file');
@@ -2209,8 +2215,10 @@ module.exports = function createGisModule({
     }
   }));
 
-  // The model file itself, scoped to the project that owns it and confined to the uploads
-  // volume. Only glTF formats are served: the layer draws geometry, not IFC.
+  // The model file itself, scoped to the project that owns it. Only glTF formats are served:
+  // the layer draws geometry, not IFC. Bytes come from object storage when it is configured and
+  // from the uploads volume otherwise; either way the browser fetches this same-origin,
+  // authenticated URL, so MapLibre/Three.js need no bucket CORS rule or public object.
   app.get('/api/gis/georeferencing/:projectId/model/:modelId/file', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
     const modelId = Number(req.params.modelId);
     if (!Number.isInteger(modelId) || modelId <= 0) {
@@ -2229,27 +2237,46 @@ module.exports = function createGisModule({
         error: 'The map layer can only draw a GLB or glTF model. Export this model as .glb and import it again.'
       });
     }
-    if (!row.file_path) return res.status(404).json({ error: 'The stored model has no file on disk.' });
-
-    const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, 'uploads'));
-    const absolute = path.resolve(row.file_path);
-    if (absolute !== uploadRoot && !absolute.startsWith(uploadRoot + path.sep)) {
-      return res.status(403).json({ error: 'The stored model path is outside the uploads volume and will not be served.' });
-    }
-
-    let stats;
-    try {
-      stats = await fs.promises.stat(absolute);
-    } catch (err) {
-      return res.status(404).json({ error: 'The stored model file is no longer on disk. Import it again.' });
-    }
-    if (!stats.isFile()) return res.status(404).json({ error: 'The stored model path is not a file.' });
+    const stored = String(row.file_path || '');
+    if (!stored) return res.status(404).json({ error: 'The stored model has no file.' });
 
     res.setHeader('Content-Type', extension === '.glb' ? 'model/gltf-binary' : 'model/gltf+json');
-    res.setHeader('Content-Length', stats.size);
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.file_name || `model${extension}`)}"`);
     res.setHeader('Cache-Control', 'private, max-age=300');
-    fs.createReadStream(absolute).pipe(res);
+
+    // Rows imported before object storage existed hold an absolute path on the uploads volume.
+    if (path.isAbsolute(stored)) {
+      const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, 'uploads'));
+      const absolute = path.resolve(stored);
+      if (absolute !== uploadRoot && !absolute.startsWith(uploadRoot + path.sep)) {
+        return res.status(403).json({ error: 'The stored model path is outside the uploads volume and will not be served.' });
+      }
+
+      let stats;
+      try {
+        stats = await fs.promises.stat(absolute);
+      } catch (err) {
+        return res.status(404).json({ error: 'The stored model file is no longer on disk. Import it again.' });
+      }
+      if (!stats.isFile()) return res.status(404).json({ error: 'The stored model path is not a file.' });
+
+      res.setHeader('Content-Length', stats.size);
+      return fs.createReadStream(absolute).pipe(res);
+    }
+
+    try {
+      await fileStorage.pipeTo(res, stored, {
+        contentType: extension === '.glb' ? 'model/gltf-binary' : 'model/gltf+json',
+        filename: row.file_name || `model${extension}`,
+        cacheControl: 'private, max-age=300'
+      });
+    } catch (err) {
+      if (res.headersSent) return res.destroy(err);
+      if (isStorageNotFound(err)) {
+        return res.status(404).json({ error: 'The stored model file is no longer in object storage. Import it again.' });
+      }
+      throw err;
+    }
   }));
 
   app.put('/api/gis/georeferencing/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
