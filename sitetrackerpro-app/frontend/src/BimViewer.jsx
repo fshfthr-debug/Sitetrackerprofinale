@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
+import { colourForType, geometryFromPlacedGeometry } from './bim/ifcGeometry';
 
 // ---------------------------------------------------------------------------
 // BIM viewer built on three.js (MIT) + web-ifc (MPL-2.0).
@@ -50,17 +51,6 @@ const styles = {
   dd: { margin: 0, overflowWrap: 'break-word' },
   measure: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '3px 0', borderBottom: '1px solid #f2f5f8' },
   error: { margin: '10px 14px', padding: '10px', borderRadius: '8px', background: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '10px', lineHeight: 1.5 }
-};
-
-// Stable colour per IFC class. Presentation only.
-const typeColours = new Map();
-const colourForType = (type) => {
-  if (!typeColours.has(type)) {
-    let hash = 0;
-    for (let i = 0; i < type.length; i++) hash = (hash * 31 + type.charCodeAt(i)) % 360;
-    typeColours.set(type, new THREE.Color().setHSL(hash / 360, 0.45, 0.62));
-  }
-  return typeColours.get(type);
 };
 
 const refId = (value) => {
@@ -634,36 +624,13 @@ export default function BimViewer({ token, projects = [], projectId }) {
 
         for (let i = 0; i < flatMesh.geometries.size(); i++) {
           const placed = flatMesh.geometries.get(i);
-          const geometry = api.GetGeometry(modelID, placed.geometryExpressID);
-          try {
-            const vertices = api.GetVertexArray(geometry.GetVertexData(), geometry.GetVertexDataSize());
-            const indices = api.GetIndexArray(geometry.GetIndexData(), geometry.GetIndexDataSize());
-            const count = vertices.length / 6;
-            const positions = new Float32Array(count * 3);
-            const normals = new Float32Array(count * 3);
-            for (let v = 0; v < count; v++) {
-              positions[v * 3] = vertices[v * 6];
-              positions[v * 3 + 1] = vertices[v * 6 + 1];
-              positions[v * 3 + 2] = vertices[v * 6 + 2];
-              normals[v * 3] = vertices[v * 6 + 3];
-              normals[v * 3 + 1] = vertices[v * 6 + 4];
-              normals[v * 3 + 2] = vertices[v * 6 + 5];
-            }
-            const buffer = new THREE.BufferGeometry();
-            buffer.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            buffer.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
-            buffer.setIndex(new THREE.BufferAttribute(new Uint32Array(indices), 1));
-            buffer.applyMatrix4(new THREE.Matrix4().fromArray(placed.flatTransformation));
-
-            const mesh = new THREE.Mesh(buffer, material);
-            mesh.userData.expressID = expressID;
-            mesh.userData.type = type;
-            engine.modelRoot.add(mesh);
-            engine.meshes.push(mesh);
-            record.meshes.push(mesh);
-          } finally {
-            geometry.delete();
-          }
+          // Shared with the map layer (src/bim/ifcGeometry.js): same triangles, either screen.
+          const mesh = new THREE.Mesh(geometryFromPlacedGeometry(api, modelID, placed), material);
+          mesh.userData.expressID = expressID;
+          mesh.userData.type = type;
+          engine.modelRoot.add(mesh);
+          engine.meshes.push(mesh);
+          record.meshes.push(mesh);
         }
       });
 

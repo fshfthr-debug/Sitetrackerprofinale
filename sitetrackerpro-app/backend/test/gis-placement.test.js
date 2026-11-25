@@ -5,7 +5,9 @@ const assert = require('node:assert/strict');
 const { transformPoint } = require('../gis-crs');
 const {
   ANCHOR_ORIGIN_TOLERANCE_M,
+  IFC_BROWSER_LIMIT_BYTES,
   convergenceDegrees,
+  describeModelForMap,
   initialBearingDegrees,
   resolvePlacement
 } = require('../gis-placement');
@@ -189,7 +191,57 @@ test('warns when the model reaches beyond 5 km from its anchor', () => {
 test('passes the model record through for the renderer', () => {
   const model = { id: 7, fileName: 'block-a.glb', fileType: 'model/gltf-binary', fileUrl: '/api/gis/georeferencing/1/model/7/file' };
   const placement = resolvePlacement(georef(), { model });
-  assert.deepEqual(placement.model, model);
+  assert.equal(placement.model.id, model.id);
+  assert.equal(placement.model.fileUrl, model.fileUrl);
+  assert.equal(placement.model.mapSupport.renderer, 'gltf');
+});
+
+test('draws a GLB or glTF without a size limit', () => {
+  for (const fileName of ['block.glb', 'block.gltf']) {
+    const support = describeModelForMap({ fileName, sizeBytes: 900 * 1024 * 1024 });
+    assert.equal(support.drawable, true);
+    assert.equal(support.renderer, 'gltf');
+    assert.equal(support.limitBytes, null);
+  }
+});
+
+test('reads an IFC in the browser up to and including 25 MB', () => {
+  const atLimit = describeModelForMap({ fileName: 'small.ifc', sizeBytes: IFC_BROWSER_LIMIT_BYTES });
+  assert.equal(atLimit.drawable, true);
+  assert.equal(atLimit.renderer, 'ifc');
+  assert.equal(atLimit.format, 'ifc');
+  assert.equal(atLimit.reason, null);
+});
+
+test('refuses an IFC over 25 MB and names the server conversion path', () => {
+  const support = describeModelForMap({ fileName: 'big.IFC', sizeBytes: IFC_BROWSER_LIMIT_BYTES + 1 });
+  assert.equal(support.drawable, false);
+  assert.equal(support.renderer, 'ifc');
+  assert.equal(support.limitBytes, IFC_BROWSER_LIMIT_BYTES);
+  assert.match(support.reason, /25 MB/);
+  assert.match(support.reason, /server-side conversion stage/);
+  assert.match(support.reason, /GLB/);
+});
+
+test('an IFC of unknown size is offered to the browser reader with a caveat', () => {
+  const support = describeModelForMap({ fileName: 'unknown-size.ifc' });
+  assert.equal(support.drawable, true);
+  assert.equal(support.sizeBytes, null);
+  assert.match(support.reason, /size is unknown/i);
+});
+
+test('refuses a file the map cannot draw, and says which formats it can', () => {
+  for (const fileName of ['takeoff.csv', 'drawing.dwg', 'no-extension']) {
+    const support = describeModelForMap({ fileName, sizeBytes: 1024 });
+    assert.equal(support.drawable, false);
+    assert.equal(support.renderer, null);
+    assert.match(support.reason, /IFC, GLB and glTF/);
+  }
+});
+
+test('no model means no map support to describe', () => {
+  assert.equal(describeModelForMap(null), null);
+  assert.equal(resolvePlacement(georef(), {}).model, null);
 });
 
 test('flags a large rotation as a likely swapped easting/northing', () => {

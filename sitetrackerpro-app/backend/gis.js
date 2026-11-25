@@ -2187,17 +2187,36 @@ module.exports = function createGisModule({
       return res.status(400).json({ error: 'modelId must be an integer.' });
     }
     const modelResult = requestedModelId
-      ? await pool.query('SELECT id, file_name, file_type FROM bim_models WHERE id = $1 AND project_id = $2', [requestedModelId, req.projectId])
-      : await pool.query('SELECT id, file_name, file_type FROM bim_models WHERE project_id = $1 ORDER BY id DESC LIMIT 1', [req.projectId]);
+      ? await pool.query('SELECT id, file_name, file_type, file_path FROM bim_models WHERE id = $1 AND project_id = $2', [requestedModelId, req.projectId])
+      : await pool.query('SELECT id, file_name, file_type, file_path FROM bim_models WHERE project_id = $1 ORDER BY id DESC LIMIT 1', [req.projectId]);
     if (requestedModelId && modelResult.rows.length === 0) {
       return res.status(404).json({ error: 'BIM model not found in this project.' });
     }
     const modelRow = modelResult.rows[0] || null;
+
+    // The size decides whether an IFC may be read in the browser (stage 2) or needs the server
+    // conversion stage, so it travels with the placement instead of being discovered after a
+    // 40 MB download.
+    let sizeBytes = null;
+    if (modelRow && modelRow.file_path) {
+      const stored = String(modelRow.file_path);
+      try {
+        // Rows imported before object storage existed hold an absolute path on the uploads
+        // volume; newer ones hold a storage key.
+        sizeBytes = path.isAbsolute(stored)
+          ? (await fs.promises.stat(stored)).size
+          : await fileStorage.size(stored);
+      } catch (err) {
+        sizeBytes = null;
+      }
+    }
+
     const model = modelRow
       ? {
           id: modelRow.id,
           fileName: modelRow.file_name,
           fileType: modelRow.file_type,
+          sizeBytes,
           fileUrl: `/api/gis/georeferencing/${req.projectId}/model/${modelRow.id}/file`
         }
       : null;
@@ -2215,10 +2234,11 @@ module.exports = function createGisModule({
     }
   }));
 
-  // The model file itself, scoped to the project that owns it. Only glTF formats are served:
-  // the layer draws geometry, not IFC. Bytes come from object storage when it is configured and
-  // from the uploads volume otherwise; either way the browser fetches this same-origin,
-  // authenticated URL, so MapLibre/Three.js need no bucket CORS rule or public object.
+  // The model file itself, scoped to the project that owns it. IFC is served as STEP for the
+  // browser-side reader (stage 2, up to 25 MB) and glTF as-is; nothing else is geometry the layer
+  // can draw. Bytes come from object storage when it is configured and from the uploads volume
+  // otherwise; either way the browser fetches this same-origin, authenticated URL, so
+  // MapLibre/Three.js need no bucket CORS rule or public object.
   app.get('/api/gis/georeferencing/:projectId/model/:modelId/file', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
     const modelId = Number(req.params.modelId);
     if (!Number.isInteger(modelId) || modelId <= 0) {
@@ -2232,15 +2252,17 @@ module.exports = function createGisModule({
 
     const row = result.rows[0];
     const extension = path.extname(String(row.file_name || row.file_path || '')).toLowerCase();
-    if (extension !== '.glb' && extension !== '.gltf') {
+    if (extension !== '.glb' && extension !== '.gltf' && extension !== '.ifc') {
       return res.status(415).json({
-        error: 'The map layer can only draw a GLB or glTF model. Export this model as .glb and import it again.'
+        error: 'The map layer draws IFC, GLB and glTF models. Export this model as one of those and import it again.'
       });
     }
     const stored = String(row.file_path || '');
     if (!stored) return res.status(404).json({ error: 'The stored model has no file.' });
 
-    res.setHeader('Content-Type', extension === '.glb' ? 'model/gltf-binary' : 'model/gltf+json');
+    res.setHeader('Content-Type', extension === '.glb'
+      ? 'model/gltf-binary'
+      : extension === '.ifc' ? 'application/x-step' : 'model/gltf+json');
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.file_name || `model${extension}`)}"`);
     res.setHeader('Cache-Control', 'private, max-age=300');
 
@@ -2266,7 +2288,9 @@ module.exports = function createGisModule({
 
     try {
       await fileStorage.pipeTo(res, stored, {
-        contentType: extension === '.glb' ? 'model/gltf-binary' : 'model/gltf+json',
+        contentType: extension === '.glb'
+          ? 'model/gltf-binary'
+          : extension === '.ifc' ? 'application/x-step' : 'model/gltf+json',
         filename: row.file_name || `model${extension}`,
         cacheControl: 'private, max-age=300'
       });

@@ -1,20 +1,29 @@
 import * as THREE from 'three';
 import { buildModelMatrix } from './placementMath.js';
+import { loadIfcModel, IFC_BROWSER_LIMIT_BYTES, largeIfcMessage } from './ifcModel.js';
 
 /**
- * A GLB model drawn at its georeferenced anchor on the main GIS map.
+ * A model drawn at its georeferenced anchor on the main GIS map.
  *
  * The camera is MapLibre's: the layer takes `defaultProjectionData.mainMatrix` (confirmed in the
  * stage-0 spike on 5.24.1) and renders the scene with no camera transform of its own, so the
  * building stays glued to the ground while the map pans, pitches and rotates. MapLibre's depth
  * buffer is left untouched, so a model behind a hill is hidden by the DEM.
  *
- * Geometry is rebased to its own centre (horizontally) and base (vertically) before it reaches
- * the GPU: float32 cannot hold UTM-scale coordinates with millimetre precision, and the matrix
- * carries the world position instead.
+ * Two geometry sources, one placement:
+ *   * glTF/GLB is Y-up and is rotated +90° about X into (east, north, up).
+ *   * IFC is already Z-up and is read in the browser with the BIM viewer's extraction
+ *     (src/bim/ifcGeometry.js), for files up to 25 MB. Larger files are refused here with the
+ *     server-conversion path spelled out, rather than freezing the tab.
  */
 
 export const MODEL_LAYER_ID = 'georef-bim-model';
+
+const beforeId = (map) => {
+  const layers = (map.getStyle() && map.getStyle().layers) || [];
+  const symbol = layers.find((layer) => layer.type === 'symbol' && layer.id !== MODEL_LAYER_ID);
+  return symbol ? symbol.id : undefined;
+};
 
 /**
  * The model matrix for a placement, with two decisions applied.
@@ -39,21 +48,34 @@ function modelMatrix(placement) {
   return buildModelMatrix(onSurface, rebase);
 }
 
-const beforeId = (map) => {
-  const layers = (map.getStyle() && map.getStyle().layers) || [];
-  const symbol = layers.find((layer) => layer.type === 'symbol' && layer.id !== MODEL_LAYER_ID);
-  return symbol ? symbol.id : undefined;
-};
+/** Which renderer the model needs, and whether it may be drawn at all. */
+export function rendererForPlacement(placement) {
+  const model = placement && placement.model;
+  if (!model) return { renderer: null, drawable: false, reason: 'No model is attached to this project.' };
+  const support = model.mapSupport;
+  if (support) {
+    return { renderer: support.renderer, drawable: support.drawable !== false, reason: support.reason || null };
+  }
+  const name = String(model.fileName || '');
+  if (/\.ifc$/i.test(name)) return { renderer: 'ifc', drawable: true, reason: null };
+  if (/\.glb$|\.gltf$/i.test(name)) return { renderer: 'gltf', drawable: true, reason: null };
+  return { renderer: null, drawable: false, reason: 'The map draws IFC, GLB and glTF models.' };
+}
 
-export async function attachGeoreferencedModel(map, { placement, url, authHeaders, onStatus }) {
+/**
+ * Geometry in the model's own frame, in metres, Z-up, plus how to dispose of it.
+ * Both branches return { group, sizeMetres, dispose, format }.
+ */
+async function loadModelGeometry(placement, { url, authHeaders, wasmPath, onStatus }) {
   const status = (state, message) => { if (onStatus) onStatus({ state, message }); };
+  const support = rendererForPlacement(placement);
+  if (!support.drawable) throw new Error(support.reason);
 
-  if (!placement || placement.configured === false) throw new Error('No georeferenced placement is available.');
-  if (!placement.model || !placement.model.fileUrl) throw new Error('No GLB model is attached to this project.');
-  if (!url) throw new Error('The model has no download URL.');
+  if (support.renderer === 'ifc') {
+    return loadIfcModel(url, { authHeaders, wasmPath, onStatus });
+  }
 
   status('loading', `Loading ${placement.model.fileName || 'model'}…`);
-
   const response = await fetch(url, { headers: authHeaders || {} });
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
@@ -67,10 +89,9 @@ export async function attachGeoreferencedModel(map, { placement, url, authHeader
   const gltf = await new GLTFLoader().parseAsync(buffer, '');
 
   // glTF is Y-up; the layer works in (east, north, up). Geometry is left where the file puts it:
-  // the saved transform says the anchor is the *model origin*, so shifting the geometry to its own
-  // centre (or its bounding-box base) would move the building by half its footprint against the
-  // survey control points. Whatever offset a file needs is expressed by the model origin and the
-  // height offset in the Georeferencing panel, and checked against the control points there.
+  // the saved transform says the anchor is the *model origin*, so shifting the geometry to its
+  // own centre (or its bounding-box base) would move the building by half its footprint against
+  // the survey control points.
   const oriented = new THREE.Group();
   oriented.add(gltf.scene);
   oriented.rotation.x = Math.PI / 2;
@@ -78,11 +99,44 @@ export async function attachGeoreferencedModel(map, { placement, url, authHeader
 
   const box = new THREE.Box3().setFromObject(oriented);
   const size = box.getSize(new THREE.Vector3());
+  const sizeMetres = {
+    width: Math.round(size.x * 100) / 100,
+    depth: Math.round(size.y * 100) / 100,
+    height: Math.round(size.z * 100) / 100
+  };
+
+  return {
+    group: oriented,
+    format: 'gltf',
+    sizeMetres,
+    bounds: box,
+    bytes: buffer.byteLength,
+    dispose() {
+      oriented.traverse((object) => {
+        if (object.geometry) object.geometry.dispose();
+        if (object.material) {
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          materials.forEach((material) => material.dispose && material.dispose());
+        }
+      });
+      oriented.clear();
+    }
+  };
+}
+
+export async function attachGeoreferencedModel(map, { placement, url, authHeaders, wasmPath, onStatus }) {
+  const status = (state, message) => { if (onStatus) onStatus({ state, message }); };
+
+  if (!placement || placement.configured === false) throw new Error('No georeferenced placement is available.');
+  if (!placement.model || !placement.model.fileUrl) throw new Error('No model is attached to this project.');
+  if (!url) throw new Error('The model has no download URL.');
+
+  const model = await loadModelGeometry(placement, { url, authHeaders, wasmPath, onStatus });
 
   const holder = new THREE.Group();
   holder.matrixAutoUpdate = false;
   holder.matrix.copy(modelMatrix(placement));
-  holder.add(oriented);
+  holder.add(model.group);
 
   let renderer = null;
   let scene = null;
@@ -154,27 +208,29 @@ export async function attachGeoreferencedModel(map, { placement, url, authHeader
     disposed = true;
     map.off('style.load', onStyleLoad);
     removeLayer();
-    if (scene) {
-      scene.traverse((object) => {
-        if (object.geometry) object.geometry.dispose();
-        if (object.material) {
-          const materials = Array.isArray(object.material) ? object.material : [object.material];
-          materials.forEach((material) => material.dispose && material.dispose());
-        }
-      });
-    }
+    holder.clear();
+    model.dispose();
     if (renderer) renderer.dispose();
     renderer = null;
     scene = null;
-    holder.clear();
   };
 
-  const sizeMetres = {
-    width: Math.round(size.x * 100) / 100,
-    depth: Math.round(size.y * 100) / 100,
-    height: Math.round(size.z * 100) / 100
-  };
-  status('ready', `${placement.model.fileName || 'Model'} placed at its anchor — ${sizeMetres.width} × ${sizeMetres.depth} × ${sizeMetres.height} m.`);
+  if (model.format !== 'ifc') {
+    status('ready', `${placement.model.fileName || 'Model'} placed at its anchor — `
+      + `${model.sizeMetres.width} × ${model.sizeMetres.depth} × ${model.sizeMetres.height} m.`);
+  }
 
-  return { remove, sizeMetres, layerId: MODEL_LAYER_ID };
+  return {
+    remove,
+    sizeMetres: model.sizeMetres,
+    layerId: MODEL_LAYER_ID,
+    format: model.format,
+    elements: model.elements || null,
+    meshes: model.meshes || null,
+    storeys: model.storeys || null,
+    schema: model.schema || null,
+    bytes: model.bytes || null
+  };
 }
+
+export { IFC_BROWSER_LIMIT_BYTES, largeIfcMessage };

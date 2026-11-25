@@ -17,6 +17,10 @@ const { crsDefinition, transformPoint } = require('./gis-crs');
 // rather than silently preferred. A model drawn in local coordinates near (0,0) is the normal
 // case, and there the origin is a model coordinate, not an easting: the check does not apply.
 const ANCHOR_ORIGIN_TOLERANCE_M = 0.5;
+
+// IFC files up to this size are read in the browser by web-ifc (stage 2). Larger ones need the
+// server-side conversion stage, and saying so up front is better than freezing the tab.
+const IFC_BROWSER_LIMIT_BYTES = 25 * 1024 * 1024;
 const SAME_PLACE_LIMIT_M = 5000;
 
 // Beyond this the single rotation about the anchor stops being exact (projection curvature).
@@ -79,6 +83,56 @@ function projectedDefinition(georef) {
 function anchorOriginDistanceMetres(definition, anchor, origin) {
   const projected = transformPoint([Number(anchor.lon), Number(anchor.lat)], 'EPSG:4326', definition.code);
   return Math.hypot(projected[0] - Number(origin.east), projected[1] - Number(origin.north));
+}
+
+function formatMegabytes(bytes) {
+  return `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+}
+
+/**
+ * How the map should draw this model, and what to say when it cannot.
+ *
+ * Kept on the server so the browser does not have to guess from a mimetype (multer records
+ * whatever the client sent, which is often application/octet-stream) and so the size limit is
+ * decided in one place, with one message. The renderer uses `format`/'renderer'; the UI shows
+ * `reason` when `drawable` is false.
+ */
+function describeModelForMap(model) {
+  if (!model) return null;
+  const extension = (String(model.fileName || '').match(/\.[A-Za-z0-9]+$/) || [''])[0].toLowerCase();
+  const rawSize = model.sizeBytes === null || model.sizeBytes === undefined ? null : Number(model.sizeBytes);
+  const sizeBytes = rawSize !== null && Number.isFinite(rawSize) && rawSize >= 0 ? rawSize : null;
+
+  if (extension === '.glb' || extension === '.gltf') {
+    return { format: extension.slice(1), renderer: 'gltf', drawable: true, sizeBytes, limitBytes: null, reason: null };
+  }
+
+  if (extension === '.ifc') {
+    const tooLarge = sizeBytes !== null && sizeBytes > IFC_BROWSER_LIMIT_BYTES;
+    return {
+      format: 'ifc',
+      renderer: 'ifc',
+      drawable: !tooLarge,
+      sizeBytes,
+      limitBytes: IFC_BROWSER_LIMIT_BYTES,
+      reason: tooLarge
+        ? `This IFC is ${formatMegabytes(sizeBytes)}, over the 25 MB the browser can read directly. `
+          + 'Large models need the server-side conversion stage, which is not built yet — '
+          + 'export a GLB from your BIM tool and import that in the meantime.'
+        : sizeBytes === null
+          ? 'The file size is unknown; the browser reader may still manage it.'
+          : null
+    };
+  }
+
+  return {
+    format: extension ? extension.slice(1) : 'unknown',
+    renderer: null,
+    drawable: false,
+    sizeBytes,
+    limitBytes: null,
+    reason: `The map draws IFC, GLB and glTF models, not ${extension || 'this file type'}.`
+  };
 }
 
 function modelToSurvey(anchorProjected, originEast, originNorth, rotationDeg, scale) {
@@ -252,7 +306,7 @@ function resolvePlacement(georef, { pairs = [], model = null } = {}) {
     scale: round(scale, 9),
     zOffset: round(zOffset, 4),
     bbox,
-    model,
+    model: model ? { ...model, mapSupport: describeModelForMap(model) } : null,
     checks: {
       anchorOriginDiscrepancyM: discrepancyMetres,
       residualMaxMm,
@@ -265,6 +319,8 @@ function resolvePlacement(georef, { pairs = [], model = null } = {}) {
 
 module.exports = {
   ANCHOR_ORIGIN_TOLERANCE_M,
+  IFC_BROWSER_LIMIT_BYTES,
+  describeModelForMap,
   SAME_PLACE_LIMIT_M,
   FAR_FROM_ANCHOR_M,
   initialBearingDegrees,

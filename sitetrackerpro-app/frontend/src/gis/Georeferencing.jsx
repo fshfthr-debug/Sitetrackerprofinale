@@ -282,6 +282,19 @@ export default function Georeferencing({
     }
   };
 
+  // One line for the card: which renderer draws this file, and how big it is.
+  const describeModelSupport = (model) => {
+    const support = model.mapSupport;
+    const sizeBytes = support && Number.isFinite(Number(support.sizeBytes)) ? Number(support.sizeBytes) : null;
+    const size = sizeBytes === null
+      ? null
+      : `${(sizeBytes / (1024 * 1024)).toFixed(sizeBytes < 10 * 1024 * 1024 ? 1 : 0)} MB`;
+    if (!support) return 'unknown';
+    if (!support.drawable) return `${String(support.format).toUpperCase()} — too large to draw on the map`;
+    const how = support.renderer === 'ifc' ? 'IFC read in the browser' : 'glTF';
+    return `${how}${size ? ` · ${size}` : ''}`;
+  };
+
   const checkPlacement = async () => {
     setPlacementLoading(true);
     setPlacementError('');
@@ -450,7 +463,7 @@ export default function Georeferencing({
       <div style={styles.card} id="model-placement">
         <h3 style={{ marginTop: 0 }}>3D model on the map</h3>
         <p style={{ ...styles.helper, marginTop: 0 }}>
-          Places the project's GLB at its anchor on the main map, sharing pan, zoom and pitch with the
+          Places the project's IFC (up to 25 MB, read in the browser) or GLB at its anchor on the main map, sharing pan, zoom and pitch with the
           basemap and the DEM. The placement is resolved by the server from the <strong>saved</strong> values.
           The model's own origin is the point drawn at the anchor, and it sits on the map surface plus
           the height offset — the anchor's absolute elevation is not applied until the terrain stage.
@@ -459,7 +472,7 @@ export default function Georeferencing({
           <button id="placement-check" onClick={checkPlacement} disabled={placementLoading} style={styles.buttonSmall}>
             {placementLoading ? 'Checking…' : 'Check placement'}
           </button>
-          {placement && placement.configured && placement.model && (
+          {placement && placement.configured && placement.model && placement.model.mapSupport && placement.model.mapSupport.drawable && (
             model3d
               ? <button id="placement-hide" onClick={onHideModel} style={styles.buttonSmall}>Hide model</button>
               : <button id="placement-show" onClick={() => onShowModel(placement)} style={styles.button}>Show on map</button>
@@ -486,12 +499,22 @@ export default function Georeferencing({
             </div>
             <div style={styles.fitRow}>
               <span>Model file</span>
-              <strong>{placement.model ? placement.model.fileName : 'no GLB imported'}</strong>
+              <strong>{placement.model ? placement.model.fileName : 'no model imported'}</strong>
             </div>
+            {placement.model && (
+              <div style={styles.fitRow}>
+                <span>How it is drawn</span>
+                <strong>{describeModelSupport(placement.model)}</strong>
+              </div>
+            )}
             {!placement.model && (
               <p style={styles.helper}>
-                Import an IFC exported as GLB in BIM first. Only glTF geometry can be drawn on the map.
+                Import an IFC or a GLB in BIM first. An IFC of up to 25 MB is read in the browser;
+                larger IFCs need the server-side conversion stage.
               </p>
+            )}
+            {placement.model && placement.model.mapSupport && !placement.model.mapSupport.drawable && (
+              <div style={styles.warning}>{placement.model.mapSupport.reason}</div>
             )}
             {model3d && model3dStatus.message && (
               <div style={model3dStatus.state === 'error' ? styles.error : model3dStatus.state === 'ready' ? styles.success : styles.helper}>
