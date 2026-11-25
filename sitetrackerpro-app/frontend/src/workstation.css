@@ -310,7 +310,11 @@
 
 /* Map toolbar (search + badges) */
 .gis-studio .map-top {
-  top: 10px; left: calc(var(--rail-w) + var(--dock-w) + 34px); right: calc(var(--inspector-w) + 28px);
+  /* The extra 52px keeps the search row and the EPSG badge clear of MapLibre's
+     zoom/navigation control, which is anchored to the same top-right corner.
+     Without it the two overlap as soon as the window narrows. */
+  top: 10px; left: calc(var(--rail-w) + var(--dock-w) + 34px);
+  right: calc(var(--inspector-w) + 28px + 52px);
   transition: left 200ms var(--ease), right 200ms var(--ease); z-index: 12;
 }
 .gis-studio .map-search {
@@ -622,7 +626,8 @@ html[data-gis-theme='light'] .gis-toast.error { color: var(--danger); }
   .map-subbar { right: 12px; left: 58px; overflow-x: auto; }
   .gis-studio-bar { padding-left: 58px; overflow-x: auto; }
   .studio-context { display: none; }
-  .map-top { right: 12px !important; left: 58px !important; }
+  /* Still reserve the top-right control's width on small screens. */
+  .map-top { right: 56px !important; left: 58px !important; }
   .cutfill-panel { width: min(90vw, 340px); }
   .telemetry { gap: 9px; font-size: 9px; }
   .telemetry .tel-item:nth-child(4),
