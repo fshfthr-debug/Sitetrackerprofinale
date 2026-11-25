@@ -320,10 +320,17 @@
 .gis-studio .map-search {
   background: rgba(17, 23, 21, 0.78); border-color: rgba(255, 255, 255, 0.12);
   color: #dfe7e2; backdrop-filter: blur(10px);
+  /* The row is only as wide as the gap between the rail and the inspector. Let the
+     search box give way when that gap is narrow, otherwise the badges are pushed
+     out of the row and land on the zoom control. */
+  flex: 1 1 auto; min-width: 0; width: auto; max-width: min(300px, 100%);
 }
 .gis-studio .map-search input { color: #eef4f0; }
 .gis-studio .map-search input::placeholder { color: #8b9892; }
-.gis-studio .map-badge { background: rgba(17, 23, 21, 0.78); border-color: rgba(255, 255, 255, 0.12); color: #cfd8d3; }
+.gis-studio .map-badge {
+  background: rgba(17, 23, 21, 0.78); border-color: rgba(255, 255, 255, 0.12); color: #cfd8d3;
+  flex: 0 0 auto;
+}
 .gis-studio .map-search-results { background: rgba(17, 23, 21, 0.96); border-color: rgba(255, 255, 255, 0.14); color: #e7eeea; }
 .gis-studio .map-search-result { color: #dfe7e2; }
 .gis-studio .map-search-result span { color: #8b9892; }
@@ -620,6 +627,14 @@ html[data-gis-theme='light'] .gis-toast.error { color: var(--danger); }
   .cmd-tabs { max-width: 52vw; }
   .cmd-menubar { overflow-x: auto; }
 }
+/* Narrow desktop: the row only spans the gap the layer rail and the inspector leave,
+   which is not wide enough for the search box and the badges side by side. Wrap the
+   badges underneath instead of squeezing the search field to a few characters. */
+@media (max-width: 1000px) {
+  .gis-studio .map-top { flex-wrap: wrap; row-gap: 6px; }
+  .gis-studio .map-search { flex: 1 1 100%; max-width: none; }
+}
+
 @media (max-width: 760px) {
   .gis-rail.gis-glass { width: min(84vw, 300px); }
   .gis-inspector.gis-glass { width: min(86vw, 300px); }
