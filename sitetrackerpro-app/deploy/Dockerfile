@@ -15,8 +15,9 @@ RUN wget -q "https://ftp.gnu.org/gnu/libredwg/libredwg-${LIBREDWG_VERSION}.tar.x
  && cd "libredwg-${LIBREDWG_VERSION}" \
  && ./configure --prefix=/usr/local --disable-bindings --disable-python \
  && make -j"$(nproc)" \
- && make install DESTDIR=/out \
- && /out/usr/local/bin/dwg2dxf --version
+ && make install \
+ && strip --strip-unneeded /usr/local/lib/libredwg.so.* /usr/local/bin/dwg2dxf \
+ && LD_LIBRARY_PATH=/usr/local/lib dwg2dxf --version
 
 # ---------- stage 1: build the React app ----------
 FROM node:20-alpine AS frontend
@@ -41,9 +42,11 @@ ENV NODE_ENV=production
 ENV DWG2DXF_PATH=/usr/local/bin/dwg2dxf
 WORKDIR /app
 
-COPY --from=libredwg /out/usr/local/bin/dwg2dxf /usr/local/bin/dwg2dxf
-COPY --from=libredwg /out/usr/local/lib/libredwg.so* /usr/local/lib/
-RUN chmod 755 /usr/local/bin/dwg2dxf
+COPY --from=libredwg /usr/local/bin/dwg2dxf /usr/local/bin/dwg2dxf
+COPY --from=libredwg /usr/local/lib/libredwg.so* /usr/local/lib/
+# musl searches /usr/local/lib by default; this makes it explicit for any base-image change.
+ENV LD_LIBRARY_PATH=/usr/local/lib
+RUN chmod 755 /usr/local/bin/dwg2dxf && LD_LIBRARY_PATH=/usr/local/lib dwg2dxf --version
 
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
