@@ -189,6 +189,8 @@ export default function GisWorkspace({ token, projects }) {
   const [styleVersion, setStyleVersion] = useState(0);
   const [basemapError, setBasemapError] = useState(false);
   const [basemapId, setBasemapId] = useState(DEFAULT_BASEMAP);
+  // Set when MapTiler stops serving mid-session; shown in the status bar next to the basemap name.
+  const [basemapNote, setBasemapNote] = useState('');
   const [mapKey, setMapKey] = useState('');
   const [localBasemap, setLocalBasemap] = useState(null);
   const [selected, setSelected] = useState(null);
@@ -382,7 +384,34 @@ export default function GisWorkspace({ token, projects }) {
       markersRef.current = addPlaceLabels(map, localBasemap);
     }
     // Vector style when the server has a MapTiler key; raster fallback otherwise.
-    map.setStyle(maptilerStyleUrl(basemapId, mapKey) || basemapStyle(localBasemap, basemapId));
+    const vectorStyle = maptilerStyleUrl(basemapId, mapKey);
+    map.setStyle(vectorStyle || basemapStyle(localBasemap, basemapId));
+
+    // A key that worked on page load can still start failing later (a quota is used up, a
+    // restriction is added, MapTiler returns 429). Watching the style and tile errors lets the
+    // map switch to the Esri raster basemap instead of leaving a blank canvas behind.
+    if (!vectorStyle) return undefined;
+    let handled = false;
+    const dropToRaster = reason => {
+      if (handled) return;
+      handled = true;
+      // Clearing the key re-runs this effect with the raster style for every basemap.
+      setBasemapNote(reason);
+      setMapKey('');
+    };
+    const looksLikeKeyFailure = message => /maptiler|403|429|usage restricted|failed to fetch|forbidden/i.test(String(message || ''));
+    const onError = event => {
+      const message = event && event.error ? event.error.message || String(event.error) : '';
+      if (looksLikeKeyFailure(message)) dropToRaster('MapTiler unavailable — showing Esri basemaps');
+    };
+    map.on('error', onError);
+    const timer = window.setTimeout(() => {
+      if (!map.isStyleLoaded()) dropToRaster('MapTiler slow to respond — showing Esri basemaps');
+    }, 8000);
+    return () => {
+      window.clearTimeout(timer);
+      map.off('error', onError);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [basemapId, localBasemap, mapReady, mapKey]);
 
@@ -1264,7 +1293,11 @@ export default function GisWorkspace({ token, projects }) {
       const objectUrl = URL.createObjectURL(response.data);
       const link = document.createElement('a');
       link.href = objectUrl;
-      link.download = `${fileSlug(dataset.name)}.${format === 'csv' ? 'csv' : 'geojson'}`;
+      // DXF/KML keep their own extension; a shapefile is always delivered as a .zip set.
+      const extension = { csv: 'csv', geojson: 'geojson', dxf: 'dxf', kml: 'kml' }[format] || format;
+      link.download = format === 'shp'
+        ? `${fileSlug(dataset.name)}-shp.zip`
+        : `${fileSlug(dataset.name)}.${extension}`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -1874,9 +1907,12 @@ export default function GisWorkspace({ token, projects }) {
         openPrintLayout();
         break;
       case 'export:geojson':
-      case 'export:csv': {
+      case 'export:csv':
+      case 'export:dxf':
+      case 'export:kml':
+      case 'export:shp': {
         const dataset = datasets.find(item => item.id === layers.find(layer => layer.kind === 'dataset')?.datasetId) || datasets[0];
-        if (dataset) exportDataset(dataset, command.endsWith('csv') ? 'csv' : 'geojson');
+        if (dataset) exportDataset(dataset, command.split(':')[1]);
         else setNotice('Add a dataset layer before exporting.');
         break;
       }
@@ -2315,6 +2351,27 @@ export default function GisWorkspace({ token, projects }) {
                             >
                               CSV
                             </button>
+                            <button
+                              title="Open in AutoCAD, Civil 3D or any DXF viewer"
+                              onClick={() => exportDataset(datasets.find(item => String(item.id) === String(layer.datasetId)), 'dxf')}
+                              style={styles.buttonSmall}
+                            >
+                              DXF
+                            </button>
+                            <button
+                              title="Open in Google Earth or any KML reader"
+                              onClick={() => exportDataset(datasets.find(item => String(item.id) === String(layer.datasetId)), 'kml')}
+                              style={styles.buttonSmall}
+                            >
+                              KML
+                            </button>
+                            <button
+                              title="Zipped ESRI Shapefile set (.shp/.shx/.dbf/.prj)"
+                              onClick={() => exportDataset(datasets.find(item => String(item.id) === String(layer.datasetId)), 'shp')}
+                              style={styles.buttonSmall}
+                            >
+                              Shapefile
+                            </button>
                             <span style={{ fontSize: '11px', color: '#5b6773' }}>
                               stored {payloads[layer.id]?.meta?.crs || '—'}
                             </span>
@@ -2426,12 +2483,12 @@ export default function GisWorkspace({ token, projects }) {
                 )}
 
                 <div style={{ borderTop: '1px solid #eee', marginTop: '12px', paddingTop: '10px' }}>
-                  <label style={styles.helper}>Import dataset (GeoJSON or CSV)</label>
+                  <label style={styles.helper}>Import dataset (GeoJSON, CSV, KML or zipped Shapefile)</label>
                   <input
                     id="gis-import-file"
                     ref={fileInputRef}
                     type="file"
-                    accept=".geojson,.json,.csv,application/json,text/csv"
+                    accept=".geojson,.json,.csv,.kml,.kmz,.zip,application/json,text/csv,application/vnd.google-earth.kml+xml,application/zip"
                     onChange={event => setImportFile(event.target.files && event.target.files[0] ? event.target.files[0] : null)}
                     style={{ fontSize: '12px', marginBottom: '6px', maxWidth: '100%' }}
                   />
@@ -2459,7 +2516,9 @@ export default function GisWorkspace({ token, projects }) {
                   </div>
                   <p style={{ ...styles.helper, fontSize: '11px' }}>
                     The source CRS must be stated; nothing is inferred from the file. CSV needs
-                    lon/lat or easting/northing columns. Max {3000} features, 20 MB.
+                    lon/lat or easting/northing columns. KML is always WGS 84, so its CRS is set
+                    automatically. A zipped Shapefile is read from its .shp/.shx/.dbf set. Max
+                    {3000} features, 20 MB.
                   </p>
                 </div>
 
@@ -2898,6 +2957,8 @@ export default function GisWorkspace({ token, projects }) {
         layers={layers.length}
         projectName={project?.name}
         theme={theme}
+        basemap={mapKey ? 'MapTiler vector' : 'Esri raster'}
+        basemapNote={basemapNote}
       />
 
       <ToolDock activeTool={activeTool} onTool={applyTool} />

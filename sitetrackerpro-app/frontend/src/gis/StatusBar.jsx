@@ -18,7 +18,7 @@ function scaleMetresPerPixel(zoom, lat) {
   return (156543.03392 * Math.cos((lat * Math.PI) / 180)) / Math.pow(2, zoom);
 }
 
-export default function StatusBar({ cursor, zoom, elevation, workingCrs, layers = 0, projectName, theme }) {
+export default function StatusBar({ cursor, zoom, elevation, workingCrs, layers = 0, projectName, theme, basemap, basemapNote }) {
   const utm = useMemo(() => (cursor ? utmFor(cursor.lng) : null), [cursor]);
 
   const easting = useMemo(() => {
@@ -72,6 +72,13 @@ export default function StatusBar({ cursor, zoom, elevation, workingCrs, layers 
         {layers}
       </span>
       <span className="tel-item tel-spacer" />
+      <span
+        className={`tel-item tel-basemap${basemapNote ? ' is-fallback' : ''}`}
+        title={basemapNote || `Basemap source: ${basemap || 'Esri raster'}`}
+      >
+        <span className="tel-key">BASE</span>
+        {basemap || 'Esri raster'}
+      </span>
       <span className="tel-item tel-theme">{theme === 'light' ? 'Light GIS' : 'Dark GIS'}</span>
       <span className="tel-badge" title="Working coordinate reference system">{workingCrs || 'EPSG:4326'}</span>
     </footer>

@@ -30,9 +30,18 @@ function initials(name) {
 
 function MenuItem({ item, onDone }) {
   const [open, setOpen] = useState(false);
+  const [flip, setFlip] = useState(false);
   const timer = useRef(null);
+  const submenuRef = useRef(null);
 
   useEffect(() => () => clearTimeout(timer.current), []);
+
+  // Smart boundary detection: a nested submenu that would leave the viewport opens inward.
+  useEffect(() => {
+    if (!open || !submenuRef.current) return;
+    const rect = submenuRef.current.getBoundingClientRect();
+    setFlip(rect.right > window.innerWidth - 8);
+  }, [open]);
 
   if (item.divider) return <div className="cmd-menu-divider" role="separator" />;
 
@@ -50,7 +59,7 @@ function MenuItem({ item, onDone }) {
           <Icon name="chevronRight" size={13} className="cmd-menu-caret" />
         </button>
         {open && (
-          <div className="cmd-submenu" role="menu">
+          <div className={`cmd-submenu${flip ? ' flip' : ''}`} role="menu" ref={submenuRef}>
             {item.submenu.map(sub => (
               <button
                 key={sub.label}
@@ -214,14 +223,79 @@ export default function CommandBar({
         { label: 'Toggle inspector', icon: 'panel', run: () => goGis('panel:inspector') },
         { label: 'Fit project extent', icon: 'maximize', hint: 'F', run: () => goGis('map:fit') }
       ]
+    },
+    {
+      label: 'CAD / BIM',
+      items: [
+        { label: 'Import BIM / IFC model', icon: 'cube', run: () => navigate('bim-import') },
+        { label: 'Open digital twin', icon: 'cube', run: () => navigate('3d-viewer') },
+        { divider: true },
+        { label: 'Export layer to DXF', icon: 'download', hint: '⌘D', run: () => goGis('export:dxf') },
+        { label: 'Export layer to KML', icon: 'globe', run: () => goGis('export:kml') },
+        { label: 'Export layer to Shapefile', icon: 'layers', run: () => goGis('export:shp') },
+        { label: 'Import DXF / KML / Shapefile', icon: 'upload', run: () => goGis('panel:import') }
+      ]
+    },
+    {
+      label: 'Reports',
+      items: [
+        { label: 'Progress & budget', icon: 'chart', run: () => navigate('project-dashboard') },
+        { label: 'Quantity survey', icon: 'clipboard', run: () => navigate('quantity-survey') },
+        { label: 'Risk & fraud', icon: 'shield', run: () => navigate('fraud') },
+        { label: 'Print layout', icon: 'file', hint: 'P', run: () => goGis('map:print') }
+      ]
+    },
+    {
+      label: 'Team',
+      items: [
+        { label: 'Team & access', icon: 'shield', run: () => navigate('team') },
+        { label: 'Account & security', icon: 'key', run: () => navigate('account') },
+        { divider: true },
+        { label: 'Feature guide', icon: 'help', hint: '?', run: () => onOpenGuide?.() },
+        { label: 'Site AI', icon: 'sparkles', hint: '⌘J', run: () => onOpenAI?.() }
+      ]
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ]), [theme, currentScreen]);
 
   const roleLabel = ROLE_LABELS[role] || 'Member';
 
+  // Tier 2 is the contextual ribbon: the same 40px strip swaps its actions with the active mode,
+  // the way ArcGIS Pro's ribbon tabs and AutoCAD Web's contextual panels do.
+  const ribbonActions = {
+    map: [
+      { label: 'Fit', icon: 'maximize', run: () => goGis('map:fit') },
+      { label: 'Layers', icon: 'layers', run: () => goGis('panel:layers') },
+      { label: 'Inspector', icon: 'panel', run: () => goGis('panel:inspector') },
+      { label: 'Import', icon: 'upload', run: () => goGis('panel:import') },
+      { label: 'Export DXF', icon: 'download', run: () => goGis('export:dxf') },
+      { label: 'Print', icon: 'file', run: () => goGis('map:print') }
+    ],
+    bim: [
+      { label: 'Import model', icon: 'upload', run: () => navigate('bim-import') },
+      { label: 'Open twin', icon: 'cube', run: () => navigate('3d-viewer') },
+      { label: 'Place on map', icon: 'target', run: () => goGis('panel:georef') }
+    ],
+    terrain: [
+      { label: 'Cut & fill', icon: 'mountain', run: () => goGis('tool:cut-fill') },
+      { label: 'Clash check', icon: 'alert', run: () => goGis('tool:clash') },
+      { label: 'Slope hazards', icon: 'activity', run: () => goGis('tool:clash-slope') },
+      { label: 'Export DXF', icon: 'download', run: () => goGis('export:dxf') }
+    ],
+    control: [
+      { label: 'Control points', icon: 'compass', run: () => navigate('surveying') },
+      { label: 'Fit on map', icon: 'maximize', run: () => goGis('map:fit') }
+    ],
+    reports: [
+      { label: 'Progress', icon: 'chart', run: () => navigate('project-dashboard') },
+      { label: 'Risk register', icon: 'shield', run: () => navigate('fraud') },
+      { label: 'Team', icon: 'shield', run: () => navigate('team') }
+    ]
+  }[activeTab] || [];
+
   return (
     <header className="cmdbar" ref={rootRef} data-screen={currentScreen}>
+      <div className="cmdbar-tier cmdbar-tier--title">
       <div className="cmdbar-left">
         <button type="button" className="cmdbar-brand" onClick={() => navigate('dashboard')} aria-label="SiteTrackerPro overview">
           <span className="cmdbar-mark"><img src="/logo-mark.png" alt="" /></span>
@@ -281,31 +355,36 @@ export default function CommandBar({
           </select>
         </div>
 
-        <nav className="cmd-breadcrumb" aria-label="Breadcrumb">
-          <span className="cmd-crumb-parent">{activeProject?.name || 'Portfolio'}</span>
-          <span className="cmd-crumb-sep">›</span>
-          <strong>{meta?.label || 'Overview'}</strong>
+        <nav className="cmd-menubar" aria-label="Application menus">
+          {menus.map(group => (
+            <div className="cmd-menu-root" key={group.label}>
+              <button
+                type="button"
+                className={`cmd-menu-trigger${menu === group.label ? ' open' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={menu === group.label}
+                onClick={() => { setMenu(menu === group.label ? null : group.label); setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false); }}
+              >
+                {group.label}
+              </button>
+              {menu === group.label && (
+                <div className="cmd-menu cmd-menubar-menu" role="menu">
+                  {group.items.map((item, index) => (
+                    <MenuItem key={item.label || `divider-${index}`} item={item} onDone={() => setMenu(null)} />
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
         </nav>
       </div>
 
       <div className="cmdbar-center">
-        <div className="cmd-tabs" role="tablist" aria-label="Workspace mode">
-          {MODE_TABS.map(tab => (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              className={`cmd-tab${activeTab === tab.id ? ' active' : ''}`}
-              aria-selected={activeTab === tab.id}
-              onClick={() => {
-                navigate(tab.screen, tab.id);
-                if (tab.command) window.setTimeout(() => sendGisCommand(tab.command), 0);
-              }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        <span className="cmd-breadcrumb" aria-label="Location">
+          <span className="cmd-crumb-parent">{activeProject?.name || 'Portfolio'}</span>
+          <span className="cmd-crumb-sep">›</span>
+          <strong>{meta?.label || 'Overview'}</strong>
+        </span>
       </div>
 
       <div className="cmdbar-right">
@@ -396,29 +475,41 @@ export default function CommandBar({
           )}
         </div>
       </div>
+      </div>
 
-      <nav className="cmd-menubar" aria-label="Application menus">
-        {menus.map(group => (
-          <div className="cmd-menu-root" key={group.label}>
+      <div className="cmdbar-tier cmdbar-tier--ribbon">
+        <div className="cmd-tabs" role="tablist" aria-label="Workspace mode">
+          {MODE_TABS.map(tab => (
             <button
+              key={tab.id}
               type="button"
-              className={`cmd-menu-trigger${menu === group.label ? ' open' : ''}`}
-              aria-haspopup="menu"
-              aria-expanded={menu === group.label}
-              onClick={() => { setMenu(menu === group.label ? null : group.label); setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false); }}
+              role="tab"
+              className={`cmd-tab${activeTab === tab.id ? ' active' : ''}`}
+              aria-selected={activeTab === tab.id}
+              onClick={() => {
+                navigate(tab.screen, tab.id);
+                if (tab.command) window.setTimeout(() => sendGisCommand(tab.command), 0);
+              }}
             >
-              {group.label}
+              {tab.label}
             </button>
-            {menu === group.label && (
-              <div className="cmd-menu cmd-menubar-menu" role="menu">
-                {group.items.map((item, index) => (
-                  <MenuItem key={item.label || `divider-${index}`} item={item} onDone={() => setMenu(null)} />
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </nav>
+          ))}
+        </div>
+        <div className="cmd-ribbon-actions" role="toolbar" aria-label="Contextual actions">
+          {ribbonActions.map(action => (
+            <button
+              key={action.label}
+              type="button"
+              className="cmd-ribbon-btn"
+              onClick={action.run}
+              title={action.label}
+            >
+              <Icon name={action.icon} size={14} />
+              <span>{action.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </header>
   );
 }

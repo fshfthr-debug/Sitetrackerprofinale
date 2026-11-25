@@ -14,6 +14,7 @@
 const crypto = require('crypto');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
+const cadIo = require('./cad-io');
 const {
   crsDefinition,
   listCrs,
@@ -427,7 +428,10 @@ function validateGeographic(featureCollection) {
 // File import/export helpers (GeoJSON and CSV). Files are parsed in memory; the same feature
 // limit as Overpass imports applies, and a CRS must be named explicitly.
 // ---------------------------------------------------------------------------
-const IMPORT_FORMATS = new Set(['geojson', 'csv']);
+const IMPORT_FORMATS = new Set(['geojson', 'csv', 'kml', 'shp', 'zip']);
+// CAD exports can leave the map in the drawing's own projected CRS, which is what AutoCAD and
+// Civil 3D expect for a site plan. The API default stays the stored CRS.
+const EXPORT_FORMATS = new Set(['geojson', 'csv', 'dxf', 'kml', 'shp']);
 const GEOMETRY_TYPES = new Set(['Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon']);
 
 function parseCsv(text) {
@@ -463,6 +467,13 @@ function parseCsv(text) {
   if (headers.some(header => !header)) return { error: 'Every CSV column needs a header.' };
   if (rows.length === 1) return { error: 'The CSV file has a header but no data rows.' };
   return { headers, records: rows.slice(1).map(cells => Object.fromEntries(headers.map((header, index) => [header, cells[index] === undefined ? '' : cells[index]]))) };
+}
+
+function fixedCoordinate(value, crs) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  const geographic = /^EPSG:(4326|4258|4269|4322)$/i.test(String(crs || ''));
+  return number.toFixed(geographic ? 7 : 3);
 }
 
 function csvCell(value) {
@@ -1064,24 +1075,47 @@ module.exports = function createGisModule({
     });
   }, asyncHandler(async (req, res) => {
     if (!req.file || !req.file.buffer) {
-      return res.status(400).json({ error: 'Attach a GeoJSON or CSV file in the "file" field.' });
-    }
-
-    const sourceCrs = crsDefinition(req.body.crs);
-    if (!sourceCrs) {
-      return res.status(400).json({ error: 'crs is required and must be an EPSG code from GET /api/gis/crs; nothing is inferred from coordinates.' });
+      return res.status(400).json({ error: 'Attach a GeoJSON, CSV, KML or zipped Shapefile in the "file" field.' });
     }
 
     const text = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
     const requestedFormat = String(req.body.format || '').toLowerCase();
     if (requestedFormat && !IMPORT_FORMATS.has(requestedFormat)) {
-      return res.status(400).json({ error: 'format must be geojson or csv.' });
+      return res.status(400).json({ error: 'format must be geojson, csv, kml or shp.' });
     }
+    const extension = (req.file.originalname.split('.').pop() || '').toLowerCase();
     const looksLikeJson = /^[\s\[{]/.test(text);
-    const format = requestedFormat || (looksLikeJson ? 'geojson' : 'csv');
+    const looksLikeKml = /<kml\b|<Placemark\b/i.test(text.slice(0, 4000));
+    const looksLikeZip = req.file.buffer.length > 4 && req.file.buffer.readUInt32LE(0) === 0x04034b50;
+    const format = requestedFormat
+      || (extension === 'kml' || extension === 'kmz' || looksLikeKml ? 'kml'
+        : extension === 'zip' || looksLikeZip ? 'zip'
+          : looksLikeJson ? 'geojson'
+            : 'csv');
+
+    // KML is defined in WGS 84, so its CRS is not a user choice. Everything else must declare one:
+    // inferring a projection from how large the numbers look is how site plans end up in the sea.
+    const declaredCrs = format === 'kml' ? 'EPSG:4326' : req.body.crs;
+    const sourceCrs = crsDefinition(declaredCrs);
+    if (!sourceCrs) {
+      return res.status(400).json({ error: 'crs is required and must be an EPSG code from GET /api/gis/crs; nothing is inferred from coordinates.' });
+    }
 
     let featureCollection;
-    if (format === 'geojson') {
+    if (format === 'kml') {
+      featureCollection = cadIo.parseKml(text);
+      if (!featureCollection.features.length) {
+        return res.status(400).json({ error: 'No Placemarks with a Point, LineString or Polygon were found in the KML.' });
+      }
+      const problem = validateFeatureCollection(featureCollection, 'EPSG:4326');
+      if (problem) return res.status(400).json({ error: problem });
+    } else if (format === 'zip' || format === 'shp') {
+      const parsed = cadIo.parseShapefileZip(req.file.buffer);
+      if (parsed.error) return res.status(400).json({ error: parsed.error });
+      featureCollection = parsed;
+      const problem = validateFeatureCollection(featureCollection, sourceCrs.code);
+      if (problem) return res.status(400).json({ error: problem });
+    } else if (format === 'geojson') {
       let parsed;
       try {
         parsed = JSON.parse(text);
@@ -1107,7 +1141,8 @@ module.exports = function createGisModule({
     const name = String(req.body.name || req.file.originalname.replace(/\.[^.]+$/, '') || 'Imported dataset').trim().slice(0, 200)
       || 'Imported dataset';
     const bbox = collectionBbox(featureCollection);
-    const source = `File import (${format === 'geojson' ? 'GeoJSON' : 'CSV'})`;
+    const formatLabel = { geojson: 'GeoJSON', csv: 'CSV', kml: 'KML', zip: 'Shapefile', shp: 'Shapefile' }[format] || format;
+    const source = `File import (${formatLabel})`;
     const history = [{
       at: new Date().toISOString(),
       action: 'import',
@@ -1197,8 +1232,8 @@ module.exports = function createGisModule({
   // into the GeoJSON file; CSV carries the coordinate columns and the feature properties.
   app.get('/api/gis/datasets/:projectId/:datasetId/export', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
     const format = String(req.query.format || 'geojson').toLowerCase();
-    if (!['geojson', 'csv'].includes(format)) {
-      return res.status(400).json({ error: 'format must be geojson or csv.' });
+    if (!EXPORT_FORMATS.has(format)) {
+      return res.status(400).json({ error: 'format must be geojson, csv, dxf, kml or shp.' });
     }
 
     const result = await pool.query(
@@ -1248,6 +1283,42 @@ module.exports = function createGisModule({
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', `attachment; filename="${fileName}.csv"`);
       return res.send(`${lines.join('\r\n')}\r\n`);
+    }
+
+    if (format === 'dxf') {
+      // Coordinates are written in the CRS the caller asked for, so a site plan lands in AutoCAD
+      // in metres with the drawing units set, rather than in degrees.
+      const dxf = cadIo.featureCollectionToDxf(geojson, {
+        layerName: row.name,
+        crs: targetCrs,
+        units: String(targetCrs).toUpperCase() === 'EPSG:4326' ? 0 : 6
+      });
+      res.setHeader('Content-Type', 'application/dxf; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}.dxf"`);
+      return res.send(dxf);
+    }
+
+    if (format === 'kml') {
+      let kmlSource = geojson;
+      if (targetCrs !== 'EPSG:4326') {
+        try {
+          kmlSource = transformFeatureCollection(geojson, targetCrs, 'EPSG:4326');
+        } catch (err) {
+          return res.status(400).json({ error: `KML export needs WGS 84 coordinates: ${err.message}` });
+        }
+      }
+      const kml = cadIo.featureCollectionToKml(kmlSource, { name: row.name });
+      res.setHeader('Content-Type', 'application/vnd.google-earth.kml+xml; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}.kml"`);
+      return res.send(kml);
+    }
+
+    if (format === 'shp') {
+      const archive = cadIo.featureCollectionToShapefileZip(geojson, { layerName: row.name, crs: targetCrs });
+      if (!archive) return res.status(400).json({ error: 'This dataset has no points, lines or polygons to write to a shapefile.' });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}-shp.zip"`);
+      return res.send(archive);
     }
 
     const exported = {
@@ -1393,6 +1464,79 @@ module.exports = function createGisModule({
       controlCount: features.filter(feature => !feature.properties.isBenchmark).length,
       count: features.length
     });
+  }));
+
+  // Survey control points as CAD / interchange files. The table stores latitude and longitude,
+  // so the points are transformed into the requested projected CRS on the way out. This is the
+  // path that puts a control network straight into AutoCAD or Civil 3D.
+  app.get('/api/gis/survey-points/:projectId/export', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const format = String(req.query.format || 'dxf').toLowerCase();
+    if (!['dxf', 'kml', 'csv'].includes(format)) {
+      return res.status(400).json({ error: 'format must be dxf, kml or csv.' });
+    }
+
+    const result = await pool.query(
+      'SELECT * FROM surveying_control_points WHERE project_id = $1 ORDER BY id',
+      [req.projectId]
+    );
+    const features = result.rows
+      .filter(row => row.latitude !== null && row.longitude !== null)
+      .map(row => ({
+        type: 'Feature',
+        id: `survey/${row.id}`,
+        geometry: { type: 'Point', coordinates: [toNum(row.longitude), toNum(row.latitude)] },
+        properties: {
+          point_id: `CP-${row.id}`,
+          name: row.name || `CP-${row.id}`,
+          latitude: toNum(row.latitude),
+          longitude: toNum(row.longitude),
+          elevation: row.benchmark_elevation === null ? '' : toNum(row.benchmark_elevation),
+          is_benchmark: row.is_benchmark ? 'yes' : 'no'
+        }
+      }));
+    if (!features.length) return res.status(400).json({ error: 'This project has no control points with coordinates to export.' });
+
+    const target = req.query.crs !== undefined ? crsDefinition(req.query.crs) : crsDefinition('EPSG:4326');
+    if (!target) return res.status(400).json({ error: `Unsupported CRS ${req.query.crs}. Choose one from GET /api/gis/crs.` });
+    let geojson = { type: 'FeatureCollection', features };
+    try {
+      geojson = transformFeatureCollection(geojson, 'EPSG:4326', target.code);
+    } catch (err) {
+      return res.status(400).json({ error: `Export transform failed: ${err.message}` });
+    }
+
+    const fileName = `control-points-${req.projectId}`;
+    if (format === 'csv') {
+      const header = ['point_id', 'name', 'easting_or_lon', 'northing_or_lat', 'elevation', 'is_benchmark'];
+      const lines = [header.join(',')];
+      geojson.features.forEach(feature => {
+        const [x, y] = feature.geometry.coordinates;
+        lines.push([
+          feature.properties.point_id, feature.properties.name,
+          fixedCoordinate(x, target.code), fixedCoordinate(y, target.code),
+          feature.properties.elevation, feature.properties.is_benchmark
+        ].map(csvCell).join(','));
+      });
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}.csv"`);
+      return res.send(`${lines.join('\r\n')}\r\n`);
+    }
+
+    if (format === 'kml') {
+      const kml = cadIo.featureCollectionToKml({ type: 'FeatureCollection', features }, { name: `Control points ${req.projectId}` });
+      res.setHeader('Content-Type', 'application/vnd.google-earth.kml+xml; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}.kml"`);
+      return res.send(kml);
+    }
+
+    const dxf = cadIo.featureCollectionToDxf(geojson, {
+      layerName: 'CONTROL_POINTS',
+      crs: target.code,
+      units: target.code === 'EPSG:4326' ? 0 : 6
+    });
+    res.setHeader('Content-Type', 'application/dxf; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}.dxf"`);
+    res.send(dxf);
   }));
 
   // CSV import for survey control points. Accepts geographic lon/lat or projected
