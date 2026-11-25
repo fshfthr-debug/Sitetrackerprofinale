@@ -255,9 +255,13 @@ const bimLayer = {
   renderingMode: '3d',
   onAdd(map, gl) { /* renderer, scene, camera; store map */ },
   render(gl, args) {
-    camera.projectionMatrix = new THREE.Matrix4().fromArray(args.projectionMatrix);
-    // MapLibre 5.24.1 also exposes args.defaultProjectionData.projectionMatrix; confirm which one
-    // matches the documented three.js example for this version in the stage-0 spike.
+    // Stage-0 spike, 25 Nov 2026: in MapLibre 5.24.1 the mercator world -> clip matrix is
+    // args.defaultProjectionData.mainMatrix. args.projectionMatrix is the view-space perspective
+    // matrix (its w row is [0,0,-1,0], so a mercator world point lands on w = 0), and
+    // args.modelViewProjectionMatrix already includes the map's model matrix.
+    camera.projectionMatrix = new THREE.Matrix4().fromArray(args.defaultProjectionData.mainMatrix);
+    camera.projectionMatrixInverse.copy(camera.projectionMatrix).invert();
+    renderer.autoClear = false;      // keep MapLibre's colour and depth
     renderer.resetState();
     renderer.render(scene, camera);
   }
@@ -284,8 +288,9 @@ Behaviour to get right:
 * **Picking**: raycast against loaded meshes only, and convert the hit point back to site
   coordinates (`mE, mN, mUp`) for the inspector — a measurement in model units is useless to a
   surveyor.
-* **Terrain**: with `map.setTerrain` active, custom layers are drawn with the terrain depth present;
-  verify occlusion on a hill in stage 1 rather than assuming.
+* **Terrain**: with `map.setTerrain` active, custom layers are drawn with the terrain depth present.
+  Verified in stage 0: a cube behind a 288 m ridge rendered 0 magenta pixels at 82° and 4 626 at 45°.
+  Note that MapLibre clamps pitch over terrain (82° requested → 78.4° actual).
 * **Projection**: force `mercator` while a model layer is visible. Globe support via
   `getProjectionDataForCustomLayer(true)` is a later step, not a promise.
 * **Budget**: one model at a time on the map in stage 1 (not two buildings plus a bridge); the
@@ -354,7 +359,7 @@ same limits discipline as `backend/dwg.js` applies.
 
 | Stage | Scope | Deliverable | Effort |
 |---|---|---|---|
-| **0. Spike (time-boxed half day)** | Confirm in 5.24.1 which projection matrix the three.js custom layer wants; confirm world-alignment with a 10 m cube at a known coordinate; confirm depth against a DEM hill | A throwaway page + screenshot, decision recorded in this file | 0.5 d |
+| **0. Spike (time-boxed half day)** — **done 25 Nov 2026** | Confirmed the matrix (`defaultProjectionData.mainMatrix`), alignment (0.3–0.7 px) and depth against a DEM ridge (0 px behind it at 82°) | [`3d-stage0-spike-report.md`](3d-stage0-spike-report.md) | 0.5 d |
 | **1. Placement API + GLB on the map** | `/placement` route with convergence, origin/anchor consistency check, 400 on disagreement; custom layer; rebasing; anchor/rotation/scale controls wired to the existing Georeferencing panel; GLB upload reusing `bim_models` | A GLB building standing on the map at the right coordinate, correct against a control point | 2.5 d |
 | **2. IFC in place (small files)** | Reuse `BimViewer` geometry extraction in the layer for files ≤ 25 MB, with a clear "large model" path to stage 3 | An IFC on the map without conversion | 2 d |
 | **3. Server conversion + cache** | B route (Fragments) with C as fallback; job status; `bim_model_cache`; content-hash reuse; progress UI | 100 MB IFC on the map in seconds on second open | 3–4 d |
