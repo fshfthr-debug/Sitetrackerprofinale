@@ -562,6 +562,33 @@ const ROLE_CHOICES = [
   { value: 'admin', label: 'Admin', hint: 'Also deletes records and manages team access.' }
 ];
 
+const EMPTY_MEMBER = { email: '', fullName: '', company: '', role: 'viewer', password: '' };
+
+// Readable words rather than random characters: an administrator has to pass this on, and
+// a phrase is easier to hand over accurately than a string of letters and symbols.
+const TEMP_WORDS = [
+  'orbit', 'gravel', 'lantern', 'copper', 'willow', 'harbor', 'cobalt', 'meadow',
+  'bramble', 'saddle', 'quarry', 'pylon', 'tundra', 'marble', 'sorrel', 'ember'
+];
+
+function randomIndex(length) {
+  const buffer = new Uint32Array(1);
+  if (typeof window !== 'undefined' && window.crypto && window.crypto.getRandomValues) {
+    window.crypto.getRandomValues(buffer);
+    return buffer[0] % length;
+  }
+  return Math.floor(Math.random() * length);
+}
+
+function suggestPassword() {
+  const word = () => TEMP_WORDS[randomIndex(TEMP_WORDS.length)];
+  return `${word()}-${word()}-${word()}-${100 + randomIndex(900)}`;
+}
+
+function roleLabel(role) {
+  return (ROLE_CHOICES.find(choice => choice.value === role) || ROLE_CHOICES[0]).label;
+}
+
 function TeamScreen({ token }) {
   const [users, setUsers] = useState([]);
   const [me, setMe] = useState(null);
@@ -569,6 +596,10 @@ function TeamScreen({ token }) {
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [draft, setDraft] = useState(EMPTY_MEMBER);
+  const [adding, setAdding] = useState(false);
+  const [invite, setInvite] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -617,6 +648,63 @@ function TeamScreen({ token }) {
     }
   };
 
+  const createAccount = async (event) => {
+    event.preventDefault();
+    setError('');
+    setNotice('');
+    setInvite(null);
+
+    const localProblems = [];
+    if (!draft.email.trim()) localProblems.push('Enter the email address they will sign in with.');
+    if (Array.from(draft.password).length < 12) localProblems.push('Use at least 12 characters for the temporary password.');
+    if (localProblems.length > 0) {
+      setError(localProblems.join(' '));
+      return;
+    }
+
+    setAdding(true);
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/users`,
+        {
+          email: draft.email.trim(),
+          fullName: draft.fullName.trim() || undefined,
+          company: draft.company.trim() || undefined,
+          role: draft.role,
+          password: draft.password
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const user = response.data.user;
+      setUsers(list => [...list, { ...user, project_count: 0 }]);
+      setInvite({ email: user.email, password: draft.password });
+      setNotice(`${user.full_name || user.email} is now a member, as ${roleLabel(user.role)}.`);
+      setDraft(EMPTY_MEMBER);
+      setShowAdd(false);
+    } catch (err) {
+      const data = err.response?.data;
+      setError(Array.isArray(data?.problems) && data.problems.length > 1
+        ? data.problems.join(' ')
+        : (data?.error || 'Could not create that account. Please try again.'));
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const copyInvite = async (details) => {
+    const text = 'SiteTrackerPro\n' +
+      (typeof window !== 'undefined' ? window.location.origin : '') + '\n' +
+      'Email: ' + details.email + '\n' +
+      'Temporary password: ' + details.password;
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice('Copied. Send it to them over a channel you trust, and ask them to change it in Account.');
+    } catch (err) {
+      setError('Could not copy automatically — select the password above and copy it yourself.');
+    }
+  };
+
   return (
     <div className="page">
       <div className="page-head">
@@ -629,7 +717,126 @@ function TeamScreen({ token }) {
             not allow, whatever the screen offers.
           </p>
         </div>
+        <div className="page-actions">
+          <button
+            className={showAdd ? 'btn' : 'btn btn-primary'}
+            onClick={() => { setShowAdd(!showAdd); setError(''); }}
+          >
+            <Icon name={showAdd ? 'minus' : 'plus'} size={14} /> {showAdd ? 'Cancel' : 'Add member'}
+          </button>
+        </div>
       </div>
+
+      {showAdd && (
+        <section className="panel" style={{ marginBottom: 16 }}>
+          <div className="panel-head">
+            <div className="panel-head-copy">
+              <h3>Add a member</h3>
+              <p>Give them a temporary password and a role. They can sign in straight away and change the password in Account.</p>
+            </div>
+            <span className="panel-eyebrow">Admin only</span>
+          </div>
+          <div className="panel-body">
+            <form onSubmit={createAccount}>
+              <div className="form-grid">
+                <div className="field">
+                  <label htmlFor="member-email">Email they sign in with</label>
+                  <input
+                    id="member-email"
+                    className="input"
+                    type="email"
+                    autoComplete="off"
+                    value={draft.email}
+                    onChange={event => setDraft(item => ({ ...item, email: event.target.value }))}
+                    required
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="member-role">Role</label>
+                  <select
+                    id="member-role"
+                    style={teamStyles.select}
+                    value={draft.role}
+                    onChange={event => setDraft(item => ({ ...item, role: event.target.value }))}
+                  >
+                    {ROLE_CHOICES.map(choice => (
+                      <option key={choice.value} value={choice.value}>{choice.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="member-name">Full name (optional)</label>
+                  <input
+                    id="member-name"
+                    className="input"
+                    type="text"
+                    maxLength={255}
+                    value={draft.fullName}
+                    onChange={event => setDraft(item => ({ ...item, fullName: event.target.value }))}
+                  />
+                </div>
+                <div className="field">
+                  <label htmlFor="member-company">Company (optional)</label>
+                  <input
+                    id="member-company"
+                    className="input"
+                    type="text"
+                    maxLength={255}
+                    value={draft.company}
+                    onChange={event => setDraft(item => ({ ...item, company: event.target.value }))}
+                  />
+                </div>
+                <div className="field full">
+                  <label htmlFor="member-password">Temporary password</label>
+                  <input
+                    id="member-password"
+                    className="input"
+                    type="text"
+                    autoComplete="new-password"
+                    minLength={12}
+                    maxLength={72}
+                    value={draft.password}
+                    onChange={event => setDraft(item => ({ ...item, password: event.target.value }))}
+                    required
+                  />
+                  <span style={teamStyles.hint}>
+                    At least 12 characters, and not built from their email address. Nothing is emailed —
+                    you pass it on yourself, and they change it in Account after signing in.
+                  </span>
+                </div>
+              </div>
+              <div className="form-actions">
+                <button type="submit" className="btn btn-primary" disabled={adding}>
+                  <Icon name="plus" size={13} /> {adding ? 'Creating…' : 'Create account'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => setDraft(item => ({ ...item, password: suggestPassword() }))}
+                >
+                  Suggest a password
+                </button>
+                <span className="toolbar-note">The role can be changed later in the list below.</span>
+              </div>
+            </form>
+          </div>
+        </section>
+      )}
+
+      {invite && (
+        <div style={teamStyles.invite} role="status">
+          <div>
+            <strong>{invite.email}</strong> can sign in now. Temporary password:
+            <code style={teamStyles.code}>{invite.password}</code>
+            <span style={teamStyles.hint}>
+              Send it over a channel you trust. They should change it in Account after their first sign-in.
+            </span>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={() => copyInvite(invite)}>
+            <Icon name="key" size={12} /> Copy details
+          </button>
+        </div>
+      )}
 
       {error && (
         <div role="alert" style={teamStyles.error}>{error}</div>
@@ -767,6 +974,30 @@ const teamStyles = {
     borderRadius: '8px',
     fontSize: '11.5px',
     marginBottom: '12px'
+  },
+  invite: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '12px',
+    background: 'var(--signal-soft)',
+    border: '1px solid #bcdccd',
+    color: 'var(--signal-strong)',
+    padding: '12px 14px',
+    borderRadius: '8px',
+    fontSize: '11.5px',
+    marginBottom: '12px'
+  },
+  code: {
+    display: 'inline-block',
+    marginLeft: '6px',
+    padding: '2px 6px',
+    borderRadius: '5px',
+    background: 'var(--surface)',
+    border: '1px solid var(--line)',
+    color: 'var(--ink)',
+    fontFamily: 'var(--font-mono, monospace)',
+    fontSize: '11.5px'
   },
   legend: { display: 'grid', gap: '8px', marginTop: '16px' },
   legendItem: { display: 'flex', gap: '10px', alignItems: 'baseline', fontSize: '10.5px', color: 'var(--ink-3)' }

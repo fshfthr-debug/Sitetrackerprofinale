@@ -901,6 +901,34 @@ app.patch('/api/users/:id/role', verifyToken, requireAdmin, async (req, res) => 
   }
 });
 
+// Administrators add a colleague here instead of opening public registration: the account
+// starts with a temporary password, which the person replaces in Account after signing in.
+const { readMember, createMember } = require('./team-accounts');
+
+app.post('/api/users', verifyToken, requireAdmin, async (req, res) => {
+  const { problems, values } = readMember(req.body || {}, validatePassword);
+  if (problems.length > 0) return res.status(400).json({ error: problems[0], problems });
+
+  try {
+    const user = await createMember({
+      pool,
+      hash: password => bcrypt.hash(password, 10),
+      ...values
+    });
+
+    console.log('[' + new Date().toISOString() + '] Account created: user ' + user.id + ' (' +
+      user.email + ') as ' + normaliseRole(user.role) + ', by user ' + req.userId);
+
+    res.status(201).json({ success: true, user: { ...user, role: normaliseRole(user.role) } });
+  } catch (err) {
+    // 23505 = unique violation, i.e. the address already has an account.
+    if (err.code === '23505') {
+      return res.status(409).json({ error: 'That email already has an account. Change its role in the list instead.' });
+    }
+    serverError(res, 'POST /api/users', err);
+  }
+});
+
 // Hosted Site AI. The provider key and prompt stay on the server; the browser
 // calls this authenticated route after the local Site AI cannot answer.
 const aiModule = createAiModule({ app, verifyToken });
