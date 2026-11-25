@@ -44,6 +44,21 @@ Three things are not optional:
    in browser storage for 7 days. Uploads stay on local disk unless object storage is
    configured.
 
+### Locked out?
+
+If sign-in fails and the reset email never arrives, either the account is not in the database the
+service is now using, or its password is unknown. Both are answerable from the Render shell:
+
+```
+cd backend
+npm run users                                   # lists accounts; "0 accounts" means DATABASE_URL
+                                                # points at a different database
+npm run users -- password --email you@example.com   # set a new password (reads it from stdin)
+npm run users -- create --email you@example.com --role admin
+```
+
+A password set this way also retires any reset link that was mailed before it.
+
 Plain HTTP means passwords travel in clear text. Use HTTPS (section 7) for anything beyond
 your own machine.
 

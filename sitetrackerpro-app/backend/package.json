@@ -7,7 +7,8 @@
     "start": "node backend-v3-enhanced.js",
     "dev": "nodemon backend-v3-enhanced.js",
     "test": "node --test test/*.test.js",
-    "migrate:uploads": "node scripts/migrate-uploads-to-storage.js"
+    "migrate:uploads": "node scripts/migrate-uploads-to-storage.js",
+    "users": "node scripts/account-tool.js"
   },
   "keywords": [
     "construction",
