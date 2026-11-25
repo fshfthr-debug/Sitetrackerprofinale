@@ -12,11 +12,14 @@
  */
 
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const multer = require('multer');
 const rateLimit = require('express-rate-limit');
 const cadIo = require('./cad-io');
 const dxfReader = require('./dxf');
 const dwgConverter = require('./dwg');
+const placementModule = require('./gis-placement');
 const {
   crsDefinition,
   listCrs,
@@ -651,6 +654,10 @@ module.exports = function createGisModule({
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Stage 1 of the 3D layer: the north reference decides whether the meridian convergence is
+    // removed, and the convergence itself is cached for display.
+    await pool.query("ALTER TABLE IF EXISTS gis_georeferencing ADD COLUMN IF NOT EXISTS north_reference VARCHAR(8) DEFAULT 'grid'");
+    await pool.query('ALTER TABLE IF EXISTS gis_georeferencing ADD COLUMN IF NOT EXISTS convergence_deg NUMERIC(9,6)');
     await pool.query(`
       CREATE TABLE IF NOT EXISTS gis_osm_cache (
         query_hash VARCHAR(64) PRIMARY KEY,
@@ -2155,6 +2162,96 @@ module.exports = function createGisModule({
     });
   }));
 
+  // Everything the 3D map layer needs, resolved once on the server: anchor, origin, rotation
+  // with meridian convergence applied, scale, height offset, bbox and the checks that make a
+  // wrong placement visible. The browser never runs proj4 for rendering.
+  app.get('/api/gis/georeferencing/:projectId/placement', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const georefResult = await pool.query('SELECT * FROM gis_georeferencing WHERE project_id = $1', [req.projectId]);
+    if (georefResult.rows.length === 0) {
+      return res.json({
+        projectId: Number(req.projectId),
+        configured: false,
+        warnings: ['No georeferencing is saved for this project, so no model can be placed on the map.']
+      });
+    }
+
+    const pairs = await loadAlignmentPairs(req.projectId);
+    const requestedModelId = req.query.modelId === undefined ? null : Number(req.query.modelId);
+    if (req.query.modelId !== undefined && !Number.isInteger(requestedModelId)) {
+      return res.status(400).json({ error: 'modelId must be an integer.' });
+    }
+    const modelResult = requestedModelId
+      ? await pool.query('SELECT id, file_name, file_type FROM bim_models WHERE id = $1 AND project_id = $2', [requestedModelId, req.projectId])
+      : await pool.query('SELECT id, file_name, file_type FROM bim_models WHERE project_id = $1 ORDER BY id DESC LIMIT 1', [req.projectId]);
+    if (requestedModelId && modelResult.rows.length === 0) {
+      return res.status(404).json({ error: 'BIM model not found in this project.' });
+    }
+    const modelRow = modelResult.rows[0] || null;
+    const model = modelRow
+      ? {
+          id: modelRow.id,
+          fileName: modelRow.file_name,
+          fileType: modelRow.file_type,
+          fileUrl: `/api/gis/georeferencing/${req.projectId}/model/${modelRow.id}/file`
+        }
+      : null;
+
+    try {
+      const placement = placementModule.resolvePlacement(georefResult.rows[0], { pairs, model });
+      res.json({ projectId: Number(req.projectId), ...placement });
+    } catch (err) {
+      return res.status(err.status || 400).json({
+        projectId: Number(req.projectId),
+        configured: true,
+        error: err.message,
+        ...(err.details || {})
+      });
+    }
+  }));
+
+  // The model file itself, scoped to the project that owns it and confined to the uploads
+  // volume. Only glTF formats are served: the layer draws geometry, not IFC.
+  app.get('/api/gis/georeferencing/:projectId/model/:modelId/file', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
+    const modelId = Number(req.params.modelId);
+    if (!Number.isInteger(modelId) || modelId <= 0) {
+      return res.status(400).json({ error: 'modelId must be a positive integer.' });
+    }
+    const result = await pool.query(
+      'SELECT id, file_name, file_path, file_type FROM bim_models WHERE id = $1 AND project_id = $2',
+      [modelId, req.projectId]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'BIM model not found in this project.' });
+
+    const row = result.rows[0];
+    const extension = path.extname(String(row.file_name || row.file_path || '')).toLowerCase();
+    if (extension !== '.glb' && extension !== '.gltf') {
+      return res.status(415).json({
+        error: 'The map layer can only draw a GLB or glTF model. Export this model as .glb and import it again.'
+      });
+    }
+    if (!row.file_path) return res.status(404).json({ error: 'The stored model has no file on disk.' });
+
+    const uploadRoot = path.resolve(process.env.UPLOAD_DIR || path.join(__dirname, 'uploads'));
+    const absolute = path.resolve(row.file_path);
+    if (absolute !== uploadRoot && !absolute.startsWith(uploadRoot + path.sep)) {
+      return res.status(403).json({ error: 'The stored model path is outside the uploads volume and will not be served.' });
+    }
+
+    let stats;
+    try {
+      stats = await fs.promises.stat(absolute);
+    } catch (err) {
+      return res.status(404).json({ error: 'The stored model file is no longer on disk. Import it again.' });
+    }
+    if (!stats.isFile()) return res.status(404).json({ error: 'The stored model path is not a file.' });
+
+    res.setHeader('Content-Type', extension === '.glb' ? 'model/gltf-binary' : 'model/gltf+json');
+    res.setHeader('Content-Length', stats.size);
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(row.file_name || `model${extension}`)}"`);
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    fs.createReadStream(absolute).pipe(res);
+  }));
+
   app.put('/api/gis/georeferencing/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), asyncHandler(async (req, res) => {
     const body = req.body || {};
     const problems = [];
@@ -2190,16 +2287,68 @@ module.exports = function createGisModule({
     const scale = numberOrNull(body.scale, 'Scale', { min: 0.000001, max: 1000 });
     const zOffset = numberOrNull(body.zOffset, 'Height offset');
 
+    const northReferenceInput = body.northReference === undefined || body.northReference === null || body.northReference === ''
+      ? null : String(body.northReference).trim().toLowerCase();
+    if (northReferenceInput && !['grid', 'true'].includes(northReferenceInput)) {
+      problems.push('North reference must be "grid" or "true".');
+    }
+
     if (problems.length > 0) {
       return res.status(400).json({ error: `Check the georeferencing values: ${problems.join(' ')}`, problems });
     }
+
+    // The anchor and the model origin are two records of one point. If both are supplied they
+    // must agree; if only one is supplied the other is derived. Two unchecked records at metre
+    // precision is exactly how a model ends up a few metres from where it should be.
+    const definition = crs ? crsDefinition(crs) : null;
+    const projected = Boolean(definition && definition.units !== 'degrees');
+    let resolvedLat = lat;
+    let resolvedLon = lon;
+    let resolvedEast = east;
+    let resolvedNorth = north;
+    let convergenceDeg = null;
+
+    if (projected && resolvedLat !== null && resolvedLon !== null && resolvedEast !== null && resolvedNorth !== null) {
+      const difference = placementModule.anchorOriginDistanceMetres(
+        definition, { lat: resolvedLat, lon: resolvedLon }, { east: resolvedEast, north: resolvedNorth }
+      );
+      // Only when the origin is plausibly a CRS coordinate of the anchor. A local model near
+      // (0,0) has an origin that is deliberately far from the anchor's easting.
+      if (difference <= placementModule.SAME_PLACE_LIMIT_M && difference > placementModule.ANCHOR_ORIGIN_TOLERANCE_M) {
+        return res.status(400).json({
+          error: `The anchor and the model origin describe the same point but disagree by ${difference.toFixed(3)} m ` +
+            `(limit ${placementModule.ANCHOR_ORIGIN_TOLERANCE_M} m). Correct one of them; nothing was saved.`,
+          code: 'anchor-origin-mismatch',
+          anchor: { lat: resolvedLat, lon: resolvedLon },
+          modelOrigin: { east: resolvedEast, north: resolvedNorth },
+          discrepancyMetres: Number(difference.toFixed(3)),
+          limitMetres: placementModule.ANCHOR_ORIGIN_TOLERANCE_M
+        });
+      }
+    } else if (projected && resolvedEast !== null && resolvedNorth !== null) {
+      const derived = transformPoint([resolvedEast, resolvedNorth], definition.code, 'EPSG:4326');
+      resolvedLat = derived[1];
+      resolvedLon = derived[0];
+    } else if (projected && resolvedLat !== null && resolvedLon !== null) {
+      const derived = transformPoint([resolvedLon, resolvedLat], 'EPSG:4326', definition.code);
+      resolvedEast = derived[0];
+      resolvedNorth = derived[1];
+    }
+
+    // Convergence belongs to the site: take it at the anchor's projected coordinates, not at the
+    // model origin, which for a local model is (0,0) and nowhere near the project.
+    if (projected && resolvedLat !== null && resolvedLon !== null) {
+      const anchorProjected = transformPoint([resolvedLon, resolvedLat], 'EPSG:4326', definition.code);
+      convergenceDeg = placementModule.convergenceDegrees(definition, anchorProjected[0], anchorProjected[1]).convergenceDeg;
+    }
+    const northReference = northReferenceInput || 'grid';
 
     const result = await pool.query(
       `INSERT INTO gis_georeferencing
          (project_id, crs, vertical_datum, anchor_lat, anchor_lon, anchor_elevation,
           model_origin_east, model_origin_north, model_origin_up, rotation_deg, scale, z_offset,
-          notes, verified_by, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,CURRENT_TIMESTAMP)
+          notes, verified_by, north_reference, convergence_deg, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,CURRENT_TIMESTAMP)
        ON CONFLICT (project_id) DO UPDATE SET
          crs = EXCLUDED.crs, vertical_datum = EXCLUDED.vertical_datum,
          anchor_lat = EXCLUDED.anchor_lat, anchor_lon = EXCLUDED.anchor_lon,
@@ -2207,17 +2356,27 @@ module.exports = function createGisModule({
          model_origin_east = EXCLUDED.model_origin_east, model_origin_north = EXCLUDED.model_origin_north,
          model_origin_up = EXCLUDED.model_origin_up, rotation_deg = EXCLUDED.rotation_deg,
          scale = EXCLUDED.scale, z_offset = EXCLUDED.z_offset, notes = EXCLUDED.notes,
-         verified_by = EXCLUDED.verified_by, updated_at = CURRENT_TIMESTAMP
+         verified_by = EXCLUDED.verified_by, north_reference = EXCLUDED.north_reference,
+         convergence_deg = EXCLUDED.convergence_deg, updated_at = CURRENT_TIMESTAMP
        RETURNING *`,
       [
         req.projectId, crs, body.verticalDatum ? String(body.verticalDatum).slice(0, 80) : null,
-        lat, lon, elevation, east, north, up, rotation, scale, zOffset,
+        resolvedLat, resolvedLon, elevation, resolvedEast, resolvedNorth, up, rotation, scale, zOffset,
         body.notes ? String(body.notes).slice(0, 2000) : null,
-        body.verifiedBy ? String(body.verifiedBy).slice(0, 160) : null
+        body.verifiedBy ? String(body.verifiedBy).slice(0, 160) : null,
+        northReference, convergenceDeg
       ]
     );
 
-    res.json({ success: true, georeferencing: result.rows[0] });
+    res.json({
+      success: true,
+      georeferencing: result.rows[0],
+      derived: {
+        anchor: { lat: resolvedLat, lon: resolvedLon },
+        modelOrigin: { east: resolvedEast, north: resolvedNorth },
+        convergenceDeg
+      }
+    });
   }));
 
   // Alignment pairs map model coordinates to survey control points. Nothing is shifted by

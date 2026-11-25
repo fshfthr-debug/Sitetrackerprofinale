@@ -54,7 +54,10 @@ function Field({ id, label, value, onChange, placeholder, type = 'number', step 
   );
 }
 
-export default function Georeferencing({ projectId, authHeaders, crsList, survey, onNotice, onError }) {
+export default function Georeferencing({
+  projectId, authHeaders, crsList, survey, onNotice, onError,
+  model3d, model3dStatus, onShowModel, onHideModel
+}) {
   const [georef, setGeoref] = useState(null);
   const [points, setPoints] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -68,12 +71,15 @@ export default function Georeferencing({ projectId, authHeaders, crsList, survey
   const [previewError, setPreviewError] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewNonce, setPreviewNonce] = useState(0);
+  const [placement, setPlacement] = useState(null);
+  const [placementLoading, setPlacementLoading] = useState(false);
+  const [placementError, setPlacementError] = useState('');
   const [pair, setPair] = useState({ controlPointId: '', modelEast: '', modelNorth: '', modelUp: '' });
   const [form, setForm] = useState({
     crs: '', verticalDatum: '',
     anchorLat: '', anchorLon: '', anchorElevation: '',
     originEast: '', originNorth: '', originUp: '',
-    rotationDeg: '', scale: '', zOffset: '',
+    rotationDeg: '', scale: '', zOffset: '', northReference: 'grid',
     notes: '', verifiedBy: ''
   });
 
@@ -107,6 +113,7 @@ export default function Georeferencing({ projectId, authHeaders, crsList, survey
       rotationDeg: data.rotationDeg ?? '',
       scale: data.scale ?? '',
       zOffset: data.zOffset ?? '',
+      northReference: data.northReference === 'true' ? 'true' : 'grid',
       notes: data.notes || '',
       verifiedBy: data.verifiedBy || ''
     });
@@ -134,6 +141,8 @@ export default function Georeferencing({ projectId, authHeaders, crsList, survey
     setFit(null);
     setMessage('');
     setPreview(null);
+    setPlacement(null);
+    setPlacementError('');
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, authHeaders]);
@@ -185,11 +194,14 @@ export default function Georeferencing({ projectId, authHeaders, crsList, survey
         rotationDeg: valueOrNull(form.rotationDeg),
         scale: valueOrNull(form.scale),
         zOffset: valueOrNull(form.zOffset),
+        northReference: form.northReference || 'grid',
         notes: form.notes || null,
         verifiedBy: form.verifiedBy || null
       }, { headers: authHeaders });
       await load();
       setFit(null);
+      setPlacement(null);
+      setPlacementError('');
       setMessage('Georeferencing saved. No geometry was moved or re-projected.');
       onNotice?.('Georeferencing parameters saved. No geometry shifted.');
     } catch (err) {
@@ -270,6 +282,25 @@ export default function Georeferencing({ projectId, authHeaders, crsList, survey
     }
   };
 
+  const checkPlacement = async () => {
+    setPlacementLoading(true);
+    setPlacementError('');
+    setPlacement(null);
+    try {
+      const response = await axios.get(`${API_URL}/api/gis/georeferencing/${projectId}/placement`, { headers: authHeaders });
+      setPlacement(response.data);
+      if (!response.data.configured) {
+        setPlacementError((response.data.warnings && response.data.warnings[0]) || 'No placement is saved for this project.');
+      }
+    } catch (err) {
+      const data = err.response?.data;
+      if (data) setPlacement(data);
+      setPlacementError((data && data.error) || err.message);
+    } finally {
+      setPlacementLoading(false);
+    }
+  };
+
   if (!projectId) {
     return <p style={styles.helper}>Select a project to manage survey georeferencing.</p>;
   }
@@ -308,6 +339,21 @@ export default function Georeferencing({ projectId, authHeaders, crsList, survey
         </p>
 
         <Field id="georef-vertical-datum" label="Vertical datum (as recorded)" value={form.verticalDatum} onChange={value => update('verticalDatum', value)} placeholder="e.g. local site datum" type="text" />
+
+        <label style={styles.label}>North reference of the saved rotation</label>
+        <select
+          id="georef-north-reference"
+          value={form.northReference}
+          onChange={event => update('northReference', event.target.value)}
+          style={{ ...styles.input, width: '100%' }}
+        >
+          <option value="grid">Grid north — the rotation is measured from the CRS grid (normal for CAD)</option>
+          <option value="true">True north — the meridian convergence is removed before drawing</option>
+        </select>
+        <p style={{ ...styles.helper, fontSize: '11px' }}>
+          A UTM grid north differs from true north by the meridian convergence (about 1–2° in Ethiopia).
+          “Check placement” shows the convergence for this site.
+        </p>
 
         <div style={styles.row}>
           <Field id="georef-anchor-lat" label="Anchor latitude" value={form.anchorLat} onChange={value => update('anchorLat', value)} />
@@ -398,6 +444,67 @@ export default function Georeferencing({ projectId, authHeaders, crsList, survey
               line shows the remaining horizontal offset. {preview.sample.note}
             </p>
           </>
+        )}
+      </div>
+
+      <div style={styles.card} id="model-placement">
+        <h3 style={{ marginTop: 0 }}>3D model on the map</h3>
+        <p style={{ ...styles.helper, marginTop: 0 }}>
+          Places the project's GLB at its anchor on the main map, sharing pan, zoom and pitch with the
+          basemap and the DEM. The placement is resolved by the server from the <strong>saved</strong> values.
+          The model's own origin is the point drawn at the anchor, and it sits on the map surface plus
+          the height offset — the anchor's absolute elevation is not applied until the terrain stage.
+        </p>
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          <button id="placement-check" onClick={checkPlacement} disabled={placementLoading} style={styles.buttonSmall}>
+            {placementLoading ? 'Checking…' : 'Check placement'}
+          </button>
+          {placement && placement.configured && placement.model && (
+            model3d
+              ? <button id="placement-hide" onClick={onHideModel} style={styles.buttonSmall}>Hide model</button>
+              : <button id="placement-show" onClick={() => onShowModel(placement)} style={styles.button}>Show on map</button>
+          )}
+        </div>
+
+        {placementError && <div style={styles.warning}>{placementError}</div>}
+
+        {placement && placement.configured && !placementError && (
+          <>
+            <div style={styles.fitRow}><span>Anchor</span><strong>{show(placement.anchor.lat, 8)}, {show(placement.anchor.lon, 8)}</strong></div>
+            <div style={styles.fitRow}><span>Anchor height</span><strong>{show(placement.anchor.height, 3)} m {placement.anchor.elevationRecorded ? '' : '(not recorded)'}</strong></div>
+            <div style={styles.fitRow}><span>Saved rotation</span><strong>{show(placement.rotationDeg, 4)}° {placement.northReference === 'true' ? 'from true north' : 'from grid north'}</strong></div>
+            <div style={styles.fitRow}><span>Meridian convergence</span><strong>{show(placement.convergenceDeg, 4)}°</strong></div>
+            <div style={styles.fitRow}><span>Rotation used for drawing</span><strong>{show(placement.renderRotationDeg, 4)}°</strong></div>
+            <div style={styles.fitRow}><span>Scale / height offset</span><strong>{show(placement.scale, 6)} · {show(placement.zOffset, 2)} m</strong></div>
+            <div style={styles.fitRow}>
+              <span>Control-point check</span>
+              <strong>
+                {placement.checks.residualMaxMm === null
+                  ? 'no pairs'
+                  : `${show(placement.checks.residualMaxMm, 0)} mm max (${placement.checks.pairCount} pairs)`}
+              </strong>
+            </div>
+            <div style={styles.fitRow}>
+              <span>Model file</span>
+              <strong>{placement.model ? placement.model.fileName : 'no GLB imported'}</strong>
+            </div>
+            {!placement.model && (
+              <p style={styles.helper}>
+                Import an IFC exported as GLB in BIM first. Only glTF geometry can be drawn on the map.
+              </p>
+            )}
+            {model3d && model3dStatus.message && (
+              <div style={model3dStatus.state === 'error' ? styles.error : model3dStatus.state === 'ready' ? styles.success : styles.helper}>
+                {model3dStatus.message}
+              </div>
+            )}
+            {(placement.checks.warnings || []).map(warning => <div key={warning} style={styles.warning}>{warning}</div>)}
+          </>
+        )}
+        {!placement && !placementLoading && !placementError && (
+          <p style={{ ...styles.helper, fontSize: '11px' }}>
+            Check the placement to see the anchor, the convergence and how far the model misses a survey control point.
+          </p>
         )}
       </div>
 

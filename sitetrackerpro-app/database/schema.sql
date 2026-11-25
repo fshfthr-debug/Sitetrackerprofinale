@@ -311,6 +311,8 @@ CREATE TABLE IF NOT EXISTS gis_georeferencing (
   z_offset NUMERIC(12,4),
   notes TEXT,
   verified_by VARCHAR(160),
+  north_reference VARCHAR(8) DEFAULT 'grid',
+  convergence_deg NUMERIC(9,6),
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

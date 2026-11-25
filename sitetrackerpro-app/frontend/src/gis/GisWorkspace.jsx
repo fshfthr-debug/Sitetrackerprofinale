@@ -6,6 +6,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 import OsmExplorer from './OsmExplorer';
 import SurveyGis from './SurveyGis';
 import Georeferencing from './Georeferencing';
+import { attachGeoreferencedModel } from './georeferencedModel';
 import MapPrintLayout, { niceDistance, formatDistance } from './MapPrintLayout';
 import EthiopiaCoveragePanel from './EthiopiaCoveragePanel';
 import Icon from '../ui/Icon';
@@ -197,6 +198,9 @@ export default function GisWorkspace({ token, projects }) {
   const [savingView, setSavingView] = useState(false);
   const [crsList, setCrsList] = useState([]);
   const [cursor, setCursor] = useState(null);
+  // Georeferenced GLB on the map: the resolved placement from the API plus the layer status.
+  const [model3d, setModel3d] = useState(null);
+  const [model3dStatus, setModel3dStatus] = useState({ state: 'idle', message: '' });
   const [dataVersion, setDataVersion] = useState(0);
   const [importFile, setImportFile] = useState(null);
   const [importName, setImportName] = useState('');
@@ -369,6 +373,38 @@ export default function GisWorkspace({ token, projects }) {
       setMapReady(false);
     };
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // Georeferenced 3D model. The placement is resolved by the API (anchor, rotation with
+  // meridian convergence, scale, height offset); this effect only owns the renderer and the
+  // layer lifecycle. Attaching re-happens after a basemap swap through the layer's own
+  // style.load listener.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !mapReady || !model3d) return undefined;
+    let cancelled = false;
+    let handle = null;
+    setModel3dStatus({ state: 'loading', message: 'Preparing the 3D layer…' });
+    attachGeoreferencedModel(map, {
+      placement: model3d,
+      url: `${API_URL}${model3d.model.fileUrl}`,
+      authHeaders,
+      onStatus: status => { if (!cancelled) setModel3dStatus(status); }
+    })
+      .then(result => {
+        if (cancelled) result.remove();
+        else handle = result;
+      })
+      .catch(err => {
+        if (!cancelled) setModel3dStatus({ state: 'error', message: err.message });
+      });
+    return () => {
+      cancelled = true;
+      if (handle) handle.remove();
+      setModel3dStatus({ state: 'idle', message: '' });
+    };
+  }, [mapReady, model3d, authHeaders]);
 
   // ---------------------------------------------------------------------------
   // Basemap switching. setStyle replaces every layer in the style, and the managed
@@ -2752,6 +2788,10 @@ export default function GisWorkspace({ token, projects }) {
               survey={survey}
               onNotice={setNotice}
               onError={setError}
+              model3d={model3d}
+              model3dStatus={model3dStatus}
+              onShowModel={setModel3d}
+              onHideModel={() => setModel3d(null)}
             />
           )}
 
