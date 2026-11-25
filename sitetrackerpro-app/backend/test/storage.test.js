@@ -202,6 +202,10 @@ test('the S3 client is created with forcePathStyle, region and credentials', () 
     region: 'eu-central-1',
     endpoint: 'https://project-ref.supabase.co/storage/v1/s3',
     forcePathStyle: true,
+    // Checksums are opt-in: the SDK's default sends an `aws-chunked` body with a CRC32
+    // trailer, which Supabase Storage and other S3-compatible services reject.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
     credentials: { accessKeyId: 'access-key', secretAccessKey: 'secret-key' }
   });
 });

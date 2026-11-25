@@ -32,6 +32,10 @@ Three things are not optional:
    `S3_ACCESS_KEY_ID` and `S3_SECRET_ACCESS_KEY` (S3-compatible storage, e.g. Supabase
    Storage) and the same files go to the bucket instead — surviving restarts and deploys.
    Routes B and C mount a volume; route D warns you. See `backend/.env.example`.
+   Files uploaded *before* the bucket existed stay on the disk. Move them over with
+   `cd backend && npm run migrate:uploads` (a dry run; add `-- --apply` to copy). It uploads each
+   model, checks the stored size, repoints the row and only then deletes the local file, so a
+   failure leaves the model exactly as it was.
 3. **Know what is protected and what is still open.** Built in: rate limiting on sign-in
    (10 failed attempts per IP per 15 minutes) and registration (10 per hour), generic error
    messages, a 12-character password policy, a `JWT_SECRET` startup guard, a CORS allow-list

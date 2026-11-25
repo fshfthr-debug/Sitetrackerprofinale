@@ -323,6 +323,12 @@ function createS3Storage({ config, sdk, client } = {}) {
     // Left undefined for real AWS so the default endpoint is used.
     endpoint: config.endpoint || undefined,
     forcePathStyle: config.forcePathStyle !== false,
+    // AWS SDK 3.729+ computes a CRC32 checksum by default and sends the body as `aws-chunked`
+    // with a trailer. Supabase Storage and several other S3-compatible services reject that
+    // framing, so checksums are only calculated when an operation requires one. An upload is
+    // then a plain PUT with Content-Length, which every S3-compatible endpoint accepts.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED',
     credentials: {
       accessKeyId: config.accessKeyId,
       secretAccessKey: config.secretAccessKey
