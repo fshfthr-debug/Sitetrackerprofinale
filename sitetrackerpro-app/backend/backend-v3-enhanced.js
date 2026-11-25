@@ -2354,7 +2354,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date(),
     basemaps: {
       maptilerVector: maptiler.enabled,
-      fallback: 'CARTO Voyager / Dark Matter + Esri World Imagery'
+      fallback: 'Esri World Street Map / Imagery / Topo / Dark + Light Gray'
     }
   });
 });

@@ -9,7 +9,7 @@
  * must not be pasted here.
  *
  * An empty or obviously malformed key disables vector basemaps and the frontend falls back to
- * CARTO / Esri raster tiles, which need no key at all.
+ * Esri raster tiles, which need no key at all.
  */
 
 // Layer id used by the frontend -> MapTiler style slug.
