@@ -7,8 +7,46 @@ const os = require('node:os');
 const path = require('node:path');
 const { Readable, Writable } = require('node:stream');
 
+// ---------------------------------------------------------------------------
+// A failed upload has to say why. Render's free plan has no shell, so the browser
+// message is the only diagnostic the deployer gets.
+// ---------------------------------------------------------------------------
+test('a rejected key names the keys, not "something went wrong"', () => {
+  assert.match(describeStorageFailure({ name: 'InvalidAccessKeyId', code: 'InvalidAccessKeyId' }), /S3_ACCESS_KEY_ID/);
+  assert.match(describeStorageFailure({ name: 'SignatureDoesNotMatch' }), /S3_SECRET_ACCESS_KEY/);
+  assert.match(describeStorageFailure({ name: 'CredentialsProviderError' }), /rejected/);
+});
+
+test('bucket, region and endpoint problems are distinguishable', () => {
+  assert.match(describeStorageFailure({ name: 'NoSuchBucket' }), /S3_BUCKET/);
+  assert.match(describeStorageFailure({ name: 'AccessDenied', $metadata: { httpStatusCode: 403 } }), /bucket policy/);
+  assert.match(describeStorageFailure({ name: 'PermanentRedirect' }), /S3_REGION/);
+  assert.match(describeStorageFailure({ code: 'ETIMEDOUT' }), /S3_ENDPOINT/);
+  assert.match(describeStorageFailure({ code: 'EAI_AGAIN' }), /S3_ENDPOINT/);
+});
+
+test('disk problems are named, and unknown errors stay quiet', () => {
+  assert.match(describeStorageFailure({ code: 'ENOSPC' }), /disk space/);
+  assert.match(describeStorageFailure({ code: 'EACCES' }), /upload folder/);
+  assert.match(describeStorageFailure({ name: 'TooManyRequests', $metadata: { httpStatusCode: 503 } }), /server error/);
+  assert.equal(describeStorageFailure({ name: 'TypeError', message: 'x is undefined' }), null);
+  assert.equal(describeStorageFailure(null), null);
+});
+
+test('descriptions never echo a value from the error', () => {
+  const message = describeStorageFailure({
+    name: 'SignatureDoesNotMatch',
+    message: 'key AKIAEXAMPLE was rejected for bucket private-bucket',
+    $metadata: { httpStatusCode: 403 }
+  });
+  // The sentence names the variables to check; it never repeats the key or the bucket.
+  assert.equal(/AKIAEXAMPLE|private-bucket/.test(message), false);
+  assert.match(message, /S3_SECRET_ACCESS_KEY/);
+});
+
 const {
   DEFAULT_REGION,
+  describeStorageFailure,
   normaliseS3Config,
   safeFileName,
   objectKey,

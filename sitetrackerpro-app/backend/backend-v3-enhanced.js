@@ -12,7 +12,7 @@ const helmet = require('helmet');
 const { calculateEarthworksVolumes } = require('./earthworks');
 const { createAiModule } = require('./ai');
 const { emailDeliveryChannel, sendPasswordResetEmail } = require('./email');
-const { createStorage } = require('./storage');
+const { createStorage, describeStorageFailure } = require('./storage');
 const totp = require('./totp');
 const mfa = require('./mfa');
 const {
@@ -222,6 +222,18 @@ const JWT_SECRET = requireJwtSecret();
 // where the person running the deployment can see it.
 const serverError = (res, where, err) => {
   console.error('[' + new Date().toISOString() + '] ' + where + ' failed:', err);
+
+  // A storage failure is the one 500 the person at the browser can act on, so it names its
+  // cause instead of hiding behind "something went wrong". Only a fixed sentence is echoed,
+  // never a key, a URL or anything the storage service sent back.
+  const storageHint = describeStorageFailure(err);
+  if (storageHint) {
+    return res.status(500).json({
+      error: 'The file could not be stored: ' + storageHint + '.',
+      code: 'storage_failed'
+    });
+  }
+
   return res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
 };
 
@@ -2689,7 +2701,11 @@ app.use((err, req, res, next) => {
     return res.status(413).json({ error: 'That request is too large.' });
   }
   if (err && err.name === 'MulterError') {
-    return res.status(400).json({ error: 'That file could not be uploaded. Check its size and type.' });
+    // Naming the limit saves a support round trip: "check its size" does not say which size.
+    const detail = err.code === 'LIMIT_FILE_SIZE'
+      ? 'That file is larger than the 100 MB limit.'
+      : 'That upload could not be received (' + (err.code || 'unknown reason') + ').';
+    return res.status(400).json({ error: detail, code: err.code || 'upload_failed' });
   }
 
   console.error('[' + new Date().toISOString() + '] Unhandled error on ' + req.method + ' ' + req.path + ':', err);

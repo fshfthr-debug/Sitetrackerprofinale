@@ -12,6 +12,7 @@
  */
 
 const crypto = require('crypto');
+const { describeStorageFailure } = require('./storage');
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
@@ -576,7 +577,16 @@ module.exports = function createGisModule({
   // above are required. An installation that has its own helpers can pass them in.
   serverError = (res, where, err) => {
     console.error(`${where} failed:`, err.message || err);
-    if (!res.headersSent) res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
+    if (res.headersSent) return;
+    // Same rule as the main server: a storage failure names its cause, nothing else does.
+    const storageHint = describeStorageFailure(err);
+    if (storageHint) {
+      return res.status(500).json({
+        error: 'The file could not be stored: ' + storageHint + '.',
+        code: 'storage_failed'
+      });
+    }
+    res.status(500).json({ error: 'Something went wrong on our side. Please try again.' });
   },
   toNum = (value, fallback = 0) => {
     const parsed = Number(value);

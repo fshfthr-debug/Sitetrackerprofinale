@@ -523,8 +523,53 @@ function createStorage({ env = process.env, rootDir, sdk, client } = {}) {
   return local;
 }
 
+/**
+ * Turns a storage failure into one sentence an administrator can act on.
+ *
+ * Uploads used to answer "something went wrong", which is useless from the other side of a
+ * browser: the reason (rejected keys, wrong bucket, unreachable endpoint) was only in the
+ * server log, and on a host without a shell that log is all the deployer has. This names the
+ * cause without echoing anything secret: no keys, no URLs, no bucket contents.
+ */
+function describeStorageFailure(err) {
+  if (!err) return null;
+
+  const code = String(err.code || err.Code || err.name || '');
+  const status = err.$metadata ? err.$metadata.httpStatusCode : null;
+
+  if (/InvalidAccessKeyId|SignatureDoesNotMatch|CredentialsProviderError|InvalidToken|UnrecognizedClientException/i.test(code)) {
+    return 'the storage keys were rejected — check S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY';
+  }
+  if (/NoSuchBucket/i.test(code)) {
+    return 'the bucket does not exist — check S3_BUCKET';
+  }
+  if (/AccessDenied/i.test(code) || status === 403) {
+    return 'those keys may read but not write to this bucket — check the bucket policy in Supabase';
+  }
+  if (/PermanentRedirect|AuthorizationHeaderMalformed|IllegalLocationConstraint/i.test(code)) {
+    return 'the bucket is in a different region — check S3_REGION';
+  }
+  if (/ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|EHOSTUNREACH|ECONNRESET|EPIPE/i.test(code)) {
+    return 'the storage endpoint could not be reached — check S3_ENDPOINT';
+  }
+  if (/ENOSPC/i.test(code)) {
+    return 'the server ran out of disk space while preparing the file';
+  }
+  if (/EACCES|EPERM|EROFS/i.test(code)) {
+    return 'the server cannot write to its upload folder';
+  }
+  if (/ENOENT/i.test(code)) {
+    return 'the staged upload disappeared before it could be stored';
+  }
+  if (typeof status === 'number' && status >= 500) {
+    return 'the storage service itself reported a server error — try again in a minute';
+  }
+  return null;
+}
+
 module.exports = {
   DEFAULT_REGION,
+  describeStorageFailure,
   DEFAULT_SIGNED_URL_TTL_SECONDS,
   normaliseS3Config,
   safeFileName,
