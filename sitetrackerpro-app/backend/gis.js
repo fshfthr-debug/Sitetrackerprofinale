@@ -573,6 +573,9 @@ module.exports = function createGisModule({
   requireProjectAccess,
   // The app storage handles remote (S3-compatible) and local uploads alike.
   storage,
+  // The installation-wide audit trail (see audit.js). Optional, so the module still mounts
+  // on its own in tests: without it every recordAudit call is a no-op.
+  audit,
   // Defaults keep integration into an existing backend small: only the four arguments
   // above are required. An installation that has its own helpers can pass them in.
   serverError = (res, where, err) => {
@@ -593,6 +596,8 @@ module.exports = function createGisModule({
     return Number.isFinite(parsed) ? parsed : fallback;
   }
 }) {
+  const ACTIONS = (audit && audit.ACTIONS) || {};
+  const recordAudit = audit && typeof audit.record === 'function' ? audit.record : async () => {};
   const asyncHandler = fn => (req, res) => fn(req, res).catch(err => serverError(res, `${req.method} ${req.path}`, err));
   const fileStorage = storage || createStorage({
     rootDir: process.env.UPLOAD_DIR || path.join(__dirname, 'uploads')
@@ -798,6 +803,16 @@ module.exports = function createGisModule({
       [req.projectId, req.params.queryId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Saved query not found for this project.' });
+
+    await recordAudit(pool, {
+      action: ACTIONS.DELETE_GIS_QUERY,
+      projectId: Number(req.projectId),
+      targetType: 'gis_query',
+      targetId: req.params.queryId,
+      summary: 'Deleted saved GIS query ' + req.params.queryId,
+      req
+    });
+
     res.json({ success: true, deleted: result.rowCount });
   }));
 
@@ -1214,6 +1229,23 @@ module.exports = function createGisModule({
       ]
     );
 
+    await recordAudit(pool, {
+      action: ACTIONS.UPLOAD_GIS_DATASET,
+      projectId: Number(req.projectId),
+      targetType: 'gis_dataset',
+      targetId: result.rows[0].id,
+      summary: 'Imported ' + req.file.originalname + ' — ' + featureCollection.features.length +
+        ' feature(s) stored in ' + sourceCrs.code,
+      detail: {
+        fileName: req.file.originalname,
+        format,
+        sourceCrs: sourceCrs.code,
+        features: featureCollection.features.length,
+        sizeBytes: req.file.size
+      },
+      req
+    });
+
     res.status(201).json(datasetSummary(result.rows[0]));
   }));
 
@@ -1459,6 +1491,16 @@ module.exports = function createGisModule({
       [req.projectId, req.params.datasetId]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'Dataset not found for this project.' });
+
+    await recordAudit(pool, {
+      action: ACTIONS.DELETE_GIS_DATASET,
+      projectId: Number(req.projectId),
+      targetType: 'gis_dataset',
+      targetId: req.params.datasetId,
+      summary: 'Deleted GIS dataset ' + req.params.datasetId,
+      req
+    });
+
     res.json({ success: true, deleted: result.rowCount });
   }));
 
@@ -1730,6 +1772,18 @@ module.exports = function createGisModule({
       }
       await client.query('COMMIT');
       const datums = [...new Set(inserted.map(row => row.vertical_datum).filter(Boolean))];
+
+      await recordAudit(pool, {
+        action: ACTIONS.UPLOAD_SURVEY_POINTS,
+        projectId: Number(req.projectId),
+        targetType: 'control_points',
+        summary: 'Imported ' + inserted.length + ' survey point(s) from ' +
+          (req.file && req.file.originalname ? req.file.originalname : 'pasted rows') +
+          ' as ' + crsCode,
+        detail: { imported: inserted.length, sourceCrs: crsCode, storedCrs: 'EPSG:4326' },
+        req
+      });
+
       res.status(201).json({
         imported: inserted.length,
         sourceCrs: crsCode,
@@ -2541,6 +2595,16 @@ module.exports = function createGisModule({
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Alignment pair not found.' });
     }
+
+    await recordAudit(pool, {
+      action: ACTIONS.DELETE_ALIGNMENT_POINT,
+      projectId: Number(req.projectId),
+      targetType: 'alignment_point',
+      targetId: req.params.pairId,
+      summary: 'Deleted alignment pair ' + req.params.pairId,
+      req
+    });
+
     res.status(204).end();
   }));
 

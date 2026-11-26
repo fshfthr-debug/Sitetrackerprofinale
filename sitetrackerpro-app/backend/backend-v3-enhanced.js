@@ -15,6 +15,8 @@ const { emailDeliveryChannel, sendPasswordResetEmail } = require('./email');
 const { createStorage, describeStorageFailure } = require('./storage');
 const totp = require('./totp');
 const mfa = require('./mfa');
+const audit = require('./audit');
+const AUDIT = audit.ACTIONS;
 const {
   CONTROL_POINT_STATUSES,
   INITIAL_CONTROL_POINT_STATUSES,
@@ -651,7 +653,7 @@ async function withTransaction(work) {
 // ==================== GIS & GEOSPATIAL INTELLIGENCE ====================
 // Routes live in gis.js (OpenStreetMap/Overpass, datasets, CRS transforms, georeferencing).
 const createGisModule = require('./gis');
-const gisModule = createGisModule({ app, pool, verifyToken, requireProjectAccess, storage });
+const gisModule = createGisModule({ app, pool, verifyToken, requireProjectAccess, storage, audit });
 
 // DEM terrain (GeoTIFF upload, statistics, preview grid, derivatives).
 const createTerrainModule = require('./terrain');
@@ -741,6 +743,13 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
     if (result.rows.length === 0) {
       await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
       recordAccountFailure(cleanEmail);
+      await audit.record(pool, {
+        action: AUDIT.LOGIN_FAILED,
+        outcome: 'failure',
+        actorEmail: cleanEmail,
+        summary: 'Sign-in attempted for an address with no account',
+        req
+      });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -748,6 +757,16 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
     const passwordMatch = await bcrypt.compare(password, user.password);
     if (!passwordMatch) {
       recordAccountFailure(cleanEmail);
+      await audit.record(pool, {
+        action: AUDIT.LOGIN_FAILED,
+        outcome: 'failure',
+        userId: user.id,
+        actorEmail: user.email,
+        actorName: user.full_name,
+        actorRole: normaliseRole(user.role),
+        summary: 'Wrong password for ' + user.email,
+        req
+      });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -767,10 +786,30 @@ app.post('/auth/login', loginLimiter, async (req, res) => {
 
     if (!mfaSwitchedOff && mfa.mfaRequiredFor(role)) {
       const setupToken = jwt.sign({ userId: user.id, mfa: 'setup' }, JWT_SECRET, { expiresIn: '15m' });
+      await audit.record(pool, {
+        action: AUDIT.LOGIN,
+        outcome: 'mfa_setup',
+        userId: user.id,
+        actorEmail: user.email,
+        actorName: user.full_name,
+        actorRole: role,
+        summary: 'Password accepted for ' + user.email + ' — two-factor setup required before the session works',
+        req
+      });
       return res.json({ success: true, mfaSetupRequired: true, token: setupToken });
     }
 
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+
+    await audit.record(pool, {
+      action: AUDIT.LOGIN,
+      userId: user.id,
+      actorEmail: user.email,
+      actorName: user.full_name,
+      actorRole: role,
+      summary: 'Signed in',
+      req
+    });
 
     res.json({
       success: true,
@@ -821,7 +860,7 @@ async function verifyToken(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
-    const result = await pool.query('SELECT role FROM users WHERE id = $1', [decoded.userId]);
+    const result = await pool.query('SELECT role, email, full_name FROM users WHERE id = $1', [decoded.userId]);
     if (result.rows.length === 0) return res.status(401).json({ error: 'Invalid token' });
 
     const role = normaliseRole(result.rows[0].role);
@@ -845,6 +884,9 @@ async function verifyToken(req, res, next) {
 
     req.userId = decoded.userId;
     req.userRole = role;
+    // Stored on the request so an audit row can snapshot the actor without a second query.
+    req.userEmail = result.rows[0].email || null;
+    req.userName = result.rows[0].full_name || null;
     next();
   } catch (err) {
     if (err && (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError' || err.name === 'NotBeforeError')) {
@@ -939,6 +981,18 @@ app.post('/auth/login/mfa', mfaLimiter, async (req, res) => {
     clearAccountFailures(cleanEmail);
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
 
+    await audit.record(pool, {
+      action: AUDIT.MFA_LOGIN,
+      userId: user.id,
+      actorEmail: user.email,
+      actorName: user.full_name,
+      actorRole: normaliseRole(user.role),
+      summary: usedRecoveryCode
+        ? 'Signed in with a recovery code (the authenticator app was not used)'
+        : 'Signed in with an authenticator code',
+      req
+    });
+
     res.json({
       success: true,
       token,
@@ -1012,6 +1066,16 @@ app.post('/auth/mfa/enable', verifyToken, async (req, res) => {
 
     console.log('[' + new Date().toISOString() + '] Two-factor enabled for user ' + req.userId + ' (' + user.email + ')');
 
+    await audit.record(pool, {
+      action: AUDIT.MFA_ENABLED,
+      userId: user.id,
+      actorEmail: user.email,
+      actorName: user.full_name,
+      actorRole: normaliseRole(user.role),
+      summary: 'Turned two-factor on',
+      req
+    });
+
     res.json({
       success: true,
       token,
@@ -1047,6 +1111,15 @@ app.post('/auth/mfa/disable', verifyToken, async (req, res) => {
     if (!valid) return res.status(400).json({ error: 'Enter a current code (or a recovery code) to turn it off.' });
 
     await mfa.disableTotp(pool, req.userId);
+
+    await audit.record(pool, {
+      action: AUDIT.MFA_DISABLED,
+      outcome: 'warning',
+      userId: req.userId,
+      summary: 'Turned two-factor off',
+      req
+    });
+
     res.json({ success: true, message: 'Two-factor authentication is off.' });
   } catch (err) {
     serverError(res, 'POST /auth/mfa/disable', err);
@@ -1119,6 +1192,15 @@ app.patch('/api/users/:id/role', verifyToken, requireAdmin, async (req, res) => 
     console.log('[' + new Date().toISOString() + '] Role change: user ' + userId + ' (' +
       updated.rows[0].email + ') is now ' + role + ', by user ' + req.userId);
 
+    await audit.record(pool, {
+      action: AUDIT.ROLE_CHANGED,
+      targetType: 'user',
+      targetId: updated.rows[0].id,
+      summary: 'Changed ' + updated.rows[0].email + ' from ' + normaliseRole(target.rows[0].role) + ' to ' + role,
+      detail: { from: normaliseRole(target.rows[0].role), to: role, email: updated.rows[0].email },
+      req
+    });
+
     res.json({ success: true, user: { ...updated.rows[0], role: normaliseRole(updated.rows[0].role) } });
   } catch (err) {
     serverError(res, 'PATCH /api/users/:id/role', err);
@@ -1143,6 +1225,15 @@ app.post('/api/users', verifyToken, requireAdmin, async (req, res) => {
     console.log('[' + new Date().toISOString() + '] Account created: user ' + user.id + ' (' +
       user.email + ') as ' + normaliseRole(user.role) + ', by user ' + req.userId);
 
+    await audit.record(pool, {
+      action: AUDIT.USER_CREATED,
+      targetType: 'user',
+      targetId: user.id,
+      summary: 'Created the account ' + user.email + ' as ' + normaliseRole(user.role),
+      detail: { email: user.email, role: normaliseRole(user.role) },
+      req
+    });
+
     res.status(201).json({ success: true, user: { ...user, role: normaliseRole(user.role) } });
   } catch (err) {
     // 23505 = unique violation, i.e. the address already has an account.
@@ -1150,6 +1241,38 @@ app.post('/api/users', verifyToken, requireAdmin, async (req, res) => {
       return res.status(409).json({ error: 'That email already has an account. Change its role in the list instead.' });
     }
     serverError(res, 'POST /api/users', err);
+  }
+});
+
+// ==================== AUDIT TRAIL ====================
+// Read-only by design. There is no update or delete route for audit_events: the history is
+// only ever appended to by the actions themselves, so "who did what" cannot be edited from
+// the application afterwards.
+app.get('/api/audit', verifyToken, async (req, res) => {
+  // A dedicated refusal: requireAdmin's message talks about team access, which is the wrong
+  // sentence to show somebody who opened the audit screen.
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({
+      error: 'The audit trail is limited to administrators.',
+      code: 'insufficient_role',
+      role: req.userRole,
+      requiredRole: 'admin'
+    });
+  }
+
+  try {
+    const page = await audit.listEvents(pool, {
+      action: req.query.action,
+      actor: req.query.actor,
+      projectId: req.query.projectId,
+      from: req.query.from,
+      to: req.query.to,
+      limit: req.query.limit,
+      offset: req.query.offset
+    });
+    res.json({ ...page, actions: Object.values(AUDIT) });
+  } catch (err) {
+    serverError(res, 'GET /api/audit', err);
   }
 });
 
@@ -1466,6 +1589,16 @@ app.delete('/api/projects/:id', verifyToken, async (req, res) => {
       console.warn(`Storage cleanup for deleted project ${existing.rows[0].id} failed:`, err.message || err);
     }
 
+    await audit.record(pool, {
+      action: AUDIT.DELETE_PROJECT,
+      projectId: existing.rows[0].id,
+      targetType: 'project',
+      targetId: existing.rows[0].id,
+      summary: 'Deleted the project "' + existing.rows[0].name + '" and everything in it',
+      detail: { projectName: existing.rows[0].name },
+      req
+    });
+
     res.json({ success: true, deleted: { id: existing.rows[0].id, name: existing.rows[0].name } });
   } catch (err) {
     serverError(res, 'DELETE /api/projects/:id', err);
@@ -1544,6 +1677,24 @@ app.post('/api/bim/import', verifyToken, upload.single('file'), async (req, res)
     const { components, errors } = rowsToComponents(parseDelimited(text));
     const inserted = await insertComponents(projectId, components);
 
+    await audit.record(pool, {
+      action: AUDIT.UPLOAD_BIM,
+      projectId: Number(projectId),
+      targetType: 'bim_model',
+      targetId: modelResult.rows[0].id,
+      summary: 'Uploaded ' + originalName + ' — ' + inserted.length + ' take-off row(s) imported' +
+        (errors.length ? ', ' + errors.length + ' skipped' : ''),
+      detail: {
+        fileName: originalName,
+        storedKey,
+        imported: inserted.length,
+        skipped: errors.length,
+        mimetype: req.file.mimetype,
+        sizeBytes: req.file.size
+      },
+      req
+    });
+
     res.json({
       success: true,
       model: modelResult.rows[0],
@@ -1616,6 +1767,17 @@ app.get('/api/bim/components/:projectId', verifyToken, requireProjectAccess(req 
 app.delete('/api/bim/components/:projectId', verifyToken, requireProjectAccess(req => req.params.projectId), async (req, res) => {
   try {
     const result = await pool.query('DELETE FROM bim_components WHERE project_id = $1', [req.projectId]);
+
+    await audit.record(pool, {
+      action: AUDIT.DELETE_BIM_COMPONENTS,
+      projectId: Number(req.projectId),
+      targetType: 'bim_components',
+      targetId: req.projectId,
+      summary: 'Deleted ' + toNum(result.rowCount) + ' take-off row(s)',
+      detail: { deleted: toNum(result.rowCount) },
+      req
+    });
+
     res.json({ success: true, deleted: toNum(result.rowCount) });
   } catch (err) {
     serverError(res, req.method + ' ' + req.path, err);
@@ -1778,6 +1940,16 @@ app.post('/api/surveying/control-points/import', verifyToken, requireProjectAcce
         [actor.id, actor.full_name, actor.email, result.rows.map(row => row.id)]
       );
       return result;
+    });
+
+    await audit.record(pool, {
+      action: AUDIT.UPLOAD_CONTROL_POINTS,
+      projectId: Number(req.projectId),
+      targetType: 'control_points',
+      summary: 'Imported ' + inserted.rows.length + ' control point(s)' +
+        (validation.errors.length ? ', ' + validation.errors.length + ' skipped' : ''),
+      detail: { rowsRead: rows.length, imported: inserted.rows.length, skipped: validation.errors.length },
+      req
     });
 
     res.json({
@@ -2757,6 +2929,10 @@ async function ensureSchema() {
 
   // Second factor: the users columns and the recovery-code table, added on older databases.
   await mfa.ensureMfaSchema(pool);
+
+  // The audit trail, before any route can write to it. Its actor_id references users,
+  // so it has to come after that table exists.
+  await audit.ensureAuditSchema(pool);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS project_material_rates (

@@ -150,6 +150,7 @@ export default function SiteTrackerPro() {
       {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} />}
       {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} />}
       {currentScreen === 'team' && <TeamScreen token={token} />}
+      {currentScreen === 'audit' && <AuditScreen token={token} />}
       {currentScreen === 'account' && <AccountScreen token={token} />}
     </AppShell>
   );
@@ -809,6 +810,299 @@ function suggestPassword() {
 function roleLabel(role) {
   return (ROLE_CHOICES.find(choice => choice.value === role) || ROLE_CHOICES[0]).label;
 }
+
+// ===================== AUDIT TRAIL =====================
+// Who signed in, who uploaded or deleted what, who changed a role. Administrators only: the
+// API refuses everyone else, and this screen says so rather than showing an empty table that
+// would look like "nothing has happened".
+const AUDIT_LABELS = {
+  'auth.login': 'Signed in',
+  'auth.login_failed': 'Failed sign-in',
+  'auth.mfa_login': 'Signed in with authenticator',
+  'auth.mfa_enabled': 'Two-factor turned on',
+  'auth.mfa_disabled': 'Two-factor turned off',
+  'user.created': 'Account created',
+  'user.role_changed': 'Role changed',
+  'upload.bim': 'BIM / take-off upload',
+  'upload.gis_dataset': 'GIS dataset upload',
+  'upload.survey_points': 'Survey points upload',
+  'upload.control_points': 'Control points upload',
+  'delete.project': 'Project deleted',
+  'delete.bim_components': 'Take-off rows deleted',
+  'delete.gis_dataset': 'GIS dataset deleted',
+  'delete.gis_query': 'Saved query deleted',
+  'delete.alignment_point': 'Alignment point deleted'
+};
+
+const AUDIT_GROUPS = [
+  { value: '', label: 'Everything' },
+  { value: 'auth.', label: 'Sign-ins' },
+  { value: 'user.', label: 'Accounts and roles' },
+  { value: 'upload.', label: 'Uploads' },
+  { value: 'delete.', label: 'Deletions' }
+];
+
+const AUDIT_PAGE_SIZE = 50;
+
+function auditWhen(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString(undefined, {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+  });
+}
+
+function AuditScreen({ token }) {
+  const [events, setEvents] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState('');
+  const [draft, setDraft] = useState({ action: '', actor: '', from: '', to: '' });
+  const [applied, setApplied] = useState({ action: '', actor: '', from: '', to: '' });
+
+  const queryFor = (filters, offset) => ({
+    action: filters.action || undefined,
+    actor: filters.actor.trim() || undefined,
+    from: filters.from || undefined,
+    // The end date is a whole day, so a filter of "today" includes what happened this evening.
+    to: filters.to ? filters.to + 'T23:59:59' : undefined,
+    limit: AUDIT_PAGE_SIZE,
+    offset
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const headers = { Authorization: `Bearer ${token}` };
+    setLoading(true);
+    setError('');
+
+    (async () => {
+      try {
+        const response = await axios.get(`${API_URL}/api/audit`, { headers, params: queryFor(applied, 0) });
+        if (cancelled) return;
+        setEvents(response.data.events || []);
+        setTotal(response.data.total || 0);
+        setHasMore(Boolean(response.data.hasMore));
+      } catch (err) {
+        if (cancelled) return;
+        setError(err.response?.status === 403
+          ? 'The audit trail is limited to administrators. Everything else in SiteTrackerPro still works for your account.'
+          : (err.response?.data?.error || 'Could not load the audit trail. Check your connection and try again.'));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [token, applied]);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    setError('');
+    try {
+      const response = await axios.get(`${API_URL}/api/audit`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: queryFor(applied, events.length)
+      });
+      setEvents(list => list.concat(response.data.events || []));
+      setTotal(response.data.total || 0);
+      setHasMore(Boolean(response.data.hasMore));
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not load the next page. Please try again.');
+    } finally {
+      setLoadingMore(false);
+    }
+  };
+
+  const apply = (event) => {
+    event.preventDefault();
+    setApplied({ ...draft });
+  };
+
+  const clear = () => {
+    const empty = { action: '', actor: '', from: '', to: '' };
+    setDraft(empty);
+    setApplied(empty);
+  };
+
+  return (
+    <div className="page">
+      <div className="page-head">
+        <div className="page-head-copy">
+          <div className="eyebrow">Workspace / accountability</div>
+          <h1 className="page-title">Audit trail</h1>
+          <p className="page-sub">
+            Every sign-in, upload, deletion and role change, newest first. The record is append-only:
+            nothing in the app can edit or remove an entry, and a deleted account leaves its history behind.
+          </p>
+        </div>
+        <div className="page-actions">
+          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setApplied({ ...applied })} disabled={loading}>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      <form onSubmit={apply} style={auditStyles.filters}>
+        <label style={auditStyles.field}>
+          <span style={auditStyles.label}>Kind of event</span>
+          <select
+            className="input"
+            value={draft.action}
+            onChange={event => setDraft({ ...draft, action: event.target.value })}
+          >
+            {AUDIT_GROUPS.map(group => <option key={group.value} value={group.value}>{group.label}</option>)}
+          </select>
+        </label>
+        <label style={auditStyles.field}>
+          <span style={auditStyles.label}>Person</span>
+          <input
+            className="input"
+            value={draft.actor}
+            placeholder="email or name"
+            onChange={event => setDraft({ ...draft, actor: event.target.value })}
+          />
+        </label>
+        <label style={auditStyles.field}>
+          <span style={auditStyles.label}>From</span>
+          <input
+            className="input"
+            type="date"
+            value={draft.from}
+            onChange={event => setDraft({ ...draft, from: event.target.value })}
+          />
+        </label>
+        <label style={auditStyles.field}>
+          <span style={auditStyles.label}>To</span>
+          <input
+            className="input"
+            type="date"
+            value={draft.to}
+            onChange={event => setDraft({ ...draft, to: event.target.value })}
+          />
+        </label>
+        <div style={auditStyles.buttons}>
+          <button type="submit" className="btn btn-primary btn-sm" disabled={loading}>Apply</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={clear}>Clear</button>
+        </div>
+      </form>
+
+      {error && <p className="helper" style={auditStyles.error}>{error}</p>}
+
+      {loading && <p className="helper">Loading the audit trail…</p>}
+
+      {!loading && !error && events.length === 0 && (
+        <div className="panel">
+          <div className="panel-body">
+            <p className="helper">
+              Nothing matches yet. Sign-ins, uploads, deletions and role changes appear here as they happen.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {!loading && events.length > 0 && (
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>When</th>
+                <th>Who</th>
+                <th>Event</th>
+                <th>What happened</th>
+                <th>Address</th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map(entry => (
+                <tr key={entry.id}>
+                  <td style={auditStyles.when}>{auditWhen(entry.createdAt)}</td>
+                  <td>
+                    <strong style={auditStyles.who}>{entry.actorName || entry.actorEmail || 'Unknown'}</strong>
+                    {entry.actorName && entry.actorEmail && (
+                      <span style={auditStyles.sub}>{entry.actorEmail}</span>
+                    )}
+                    {entry.actorRole && <span style={auditStyles.role}>{entry.actorRole}</span>}
+                  </td>
+                  <td>
+                    <span style={entry.outcome && entry.outcome !== 'success' ? auditStyles.flagged : undefined}>
+                      {AUDIT_LABELS[entry.action] || entry.action}
+                    </span>
+                    {entry.outcome && entry.outcome !== 'success' && (
+                      <span style={auditStyles.outcome}>{entry.outcome.replace(/_/g, ' ')}</span>
+                    )}
+                  </td>
+                  <td style={auditStyles.summary}>{entry.summary}</td>
+                  <td style={auditStyles.when}>{entry.ip || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {!loading && events.length > 0 && (
+        <div style={auditStyles.footer}>
+          <span className="helper">
+            Showing {events.length} of {total} event{total === 1 ? '' : 's'}.
+          </span>
+          {hasMore && (
+            <button type="button" className="btn btn-ghost btn-sm" onClick={loadMore} disabled={loadingMore}>
+              {loadingMore ? 'Loading…' : 'Load older events'}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const auditStyles = {
+  filters: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    alignItems: 'flex-end',
+    gap: '10px',
+    marginBottom: '14px'
+  },
+  field: { display: 'flex', flexDirection: 'column', gap: '4px', minWidth: '130px' },
+  label: {
+    fontSize: '9.5px',
+    fontWeight: 600,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    color: 'var(--ink-3)'
+  },
+  buttons: { display: 'flex', gap: '6px' },
+  error: { color: 'var(--danger, #b3261e)' },
+  when: { whiteSpace: 'nowrap', fontSize: '11px', color: 'var(--ink-2)', fontVariantNumeric: 'tabular-nums' },
+  who: { display: 'block', fontSize: '12px' },
+  sub: { display: 'block', fontSize: '10.5px', color: 'var(--ink-3)' },
+  role: {
+    display: 'inline-block',
+    marginTop: '3px',
+    fontSize: '9px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+    background: 'var(--surface-2)',
+    color: 'var(--ink-3)',
+    borderRadius: '4px',
+    padding: '1px 5px'
+  },
+  summary: { fontSize: '11.5px', color: 'var(--ink)' },
+  flagged: { color: 'var(--copper-strong)', fontWeight: 600 },
+  outcome: {
+    display: 'inline-block',
+    marginLeft: '6px',
+    fontSize: '9px',
+    textTransform: 'uppercase',
+    color: 'var(--ink-3)'
+  },
+  footer: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '10px' }
+};
 
 function TeamScreen({ token }) {
   const [users, setUsers] = useState([]);

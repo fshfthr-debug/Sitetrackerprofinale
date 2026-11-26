@@ -39,6 +39,7 @@ export const NAV_SECTIONS = [
     items: [
       { id: 'bim-import', label: 'BIM import', icon: 'upload' },
       { id: 'team', label: 'Team & access', icon: 'shield' },
+      { id: 'audit', label: 'Audit trail', icon: 'receipt' },
       { id: 'account', label: 'Account', icon: 'key' }
     ]
   }
@@ -58,6 +59,7 @@ const SCREEN_META = {
   materials: { label: 'Materials', section: 'Assurance', icon: 'box' },
   'bim-import': { label: 'BIM import', section: 'Workspace', icon: 'upload' },
   team: { label: 'Team & access', section: 'Workspace', icon: 'shield' },
+  audit: { label: 'Audit trail', section: 'Workspace', icon: 'receipt' },
   account: { label: 'Account', section: 'Workspace', icon: 'key' }
 };
 
