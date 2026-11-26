@@ -1,0 +1,547 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;450;500;550;600;700&display=swap');
+
+/* ==========================================================================
+   SiteTrackerPro — "connected construction" theme
+
+   A visual layer modelled on the Trimble construction site: white canvas,
+   deep-blue navigation and actions, one warm amber accent, flat square cards,
+   large quiet headlines and photography instead of gradients.
+
+   It is a theme, not a rewrite: the tokens below re-point the existing
+   components, and the rules underneath adjust the few places where the old
+   warm, rounded language needed a different shape. Structure, screens and
+   behaviour are unchanged.
+   ========================================================================== */
+
+:root {
+  /* surfaces: white on a cool paper grey */
+  --canvas: #f4f6f8;
+  --canvas-deep: #e9edf1;
+  --surface: #ffffff;
+  --surface-2: #f6f8fa;
+  --surface-3: #edf1f4;
+  --surface-raised: #ffffff;
+
+  /* text */
+  --ink: #16191c;
+  --ink-2: #3b4248;
+  --ink-3: #5f676e;
+  --muted: #848c93;
+
+  --line: #e0e5ea;
+  --line-strong: #c7d0d7;
+
+  /* deep blue replaces the old basalt */
+  --basalt: #0a2a40;
+  --basalt-2: #0e334d;
+  --basalt-3: #154363;
+  --basalt-4: #1d547a;
+
+  /* Trimble blue is the single action colour */
+  --copper: #0063a3;
+  --copper-strong: #004d80;
+  --copper-bright: #1a86c9;
+  --copper-soft: #e6f2fa;
+
+  --signal: #167a5b;
+  --signal-strong: #10624a;
+  --signal-soft: #e3f2ec;
+  --amber: #a4610f;
+  --amber-soft: #fbf0dc;
+  --amber-bright: #f5a800;
+  --danger: #a8352c;
+  --danger-soft: #fbe9e7;
+  --sky: #0b6f96;
+  --sky-soft: #e4f0f6;
+  --violet: #5b4b86;
+  --violet-soft: #eeeaf7;
+
+  /* flat geometry: square cards, hairline borders, almost no shadow */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+
+  --shadow-xs: none;
+  --shadow-sm: 0 1px 2px rgba(16, 32, 45, 0.06);
+  --shadow-md: 0 8px 24px rgba(12, 30, 44, 0.09);
+  --shadow-lg: 0 24px 60px rgba(8, 24, 38, 0.18);
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+html { background: var(--canvas); }
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-size: 14px;
+}
+
+/* ---------------------------------------------------------------- typography */
+
+h1, h2, h3, h4 { letter-spacing: -0.025em; }
+
+.page-title {
+  font-size: clamp(30px, 3.2vw, 40px);
+  font-weight: 600;
+  letter-spacing: -0.038em;
+}
+
+.page-sub { font-size: 14px; line-height: 1.6; color: var(--ink-3); }
+
+.eyebrow {
+  color: var(--copper);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+}
+
+.eyebrow::before { width: 18px; height: 2px; opacity: 1; }
+
+.panel-head h3,
+.panel-head-copy h3 { font-size: 16px; font-weight: 600; }
+
+.panel-head p { font-size: 12px; }
+
+.panel-eyebrow { font-size: 9.5px; }
+
+/* ---------------------------------------------------------------- shell */
+
+.sidebar {
+  background: var(--surface);
+  color: var(--ink);
+  border-right: 1px solid var(--line);
+  padding: 18px 12px 12px;
+}
+
+.sidebar::-webkit-scrollbar-thumb { background: var(--line-strong); }
+.sidebar { scrollbar-color: var(--line-strong) transparent; }
+
+.brand { padding: 0 8px 20px; }
+
+.brand-mark {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.brand-word { color: var(--ink); font-weight: 700; }
+.brand-word span { color: var(--copper); }
+.brand-sub { color: var(--muted); letter-spacing: 0.16em; }
+
+.nav-label {
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+}
+
+.workspace-switch {
+  margin: 0 2px 16px;
+  padding: 10px 11px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.workspace-switch-label { color: var(--ink-3); font-size: 9px; }
+.workspace-switch select { color: var(--ink); font-weight: 600; }
+.workspace-switch-chevron { color: var(--muted); }
+
+.sidebar-user-name { color: var(--ink); }
+.sidebar-user-role { color: var(--muted); }
+.sidebar-avatar {
+  color: #ffffff;
+  background: linear-gradient(135deg, var(--copper), var(--basalt-3));
+  border-color: transparent;
+  border-radius: var(--radius-sm);
+}
+.sidebar-logout { color: var(--muted); }
+.sidebar-logout:hover { color: var(--danger); background: var(--danger-soft); }
+
+.nav-item {
+  height: 38px;
+  color: var(--ink-2);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+}
+
+.nav-item .nav-icon { color: var(--muted); }
+
+.nav-item:hover {
+  color: var(--copper-strong);
+  background: var(--surface-2);
+}
+
+.nav-item.active {
+  color: var(--copper-strong);
+  font-weight: 600;
+  background: var(--copper-soft);
+  box-shadow: inset 3px 0 0 var(--copper);
+}
+
+.nav-item.active .nav-icon { color: var(--copper); }
+.nav-item:hover .nav-icon { color: var(--copper); }
+
+.nav-badge {
+  color: #ffffff;
+  background: var(--copper);
+}
+
+.sidebar-footer { border-top: 1px solid var(--line); }
+.sidebar-logout { color: var(--ink-3); }
+
+.topbar {
+  background: rgba(255, 255, 255, 0.94);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(10px) saturate(1.05);
+}
+
+.search-trigger {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  height: 36px;
+}
+
+.topbar-status { border-radius: var(--radius-sm); }
+
+/* ---------------------------------------------------------------- actions */
+
+.btn {
+  min-height: 36px;
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.btn:hover { transform: none; border-color: var(--line-strong); box-shadow: none; }
+
+.btn-primary {
+  color: #ffffff;
+  background: var(--copper);
+  border-color: var(--copper);
+}
+
+.btn-primary:hover {
+  color: #ffffff;
+  background: var(--copper-strong);
+  border-color: var(--copper-strong);
+}
+
+.btn-copper { color: #ffffff; }
+.btn-sm { min-height: 30px; font-size: 11px; }
+
+.input, input[type="text"], input[type="email"], input[type="password"],
+input[type="number"], input[type="date"], select, textarea {
+  border-radius: var(--radius-sm);
+}
+
+.input:focus,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid rgba(0, 99, 163, 0.32);
+  outline-offset: 1px;
+  border-color: var(--copper);
+}
+
+/* ---------------------------------------------------------------- command bar */
+/* The app's real chrome is the ribbon-style command bar, not the sidebar. */
+
+.cmdbar {
+  background: var(--surface);
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+
+.cmdbar-tier--title { border-bottom: 1px solid var(--line); }
+
+.cmdbar-tier--ribbon {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.cmdbar-mark {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+
+.cmdbar-word { color: var(--ink); }
+.cmdbar-word span { color: var(--copper); }
+
+.cmd-modules-btn {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--ink-2);
+  border-radius: var(--radius-sm);
+}
+
+.cmd-modules-btn:hover,
+.cmd-modules-btn.open {
+  background: var(--copper-soft);
+  border-color: var(--copper);
+  color: var(--copper-strong);
+}
+
+.cmd-menu-trigger {
+  color: var(--ink-2);
+  font-family: var(--font-sans);
+  font-weight: 500;
+}
+
+.cmd-menu-trigger:hover,
+.cmd-menu-trigger.open { background: var(--surface-2); color: var(--copper-strong); }
+
+.cmd-project {
+  border-color: var(--line);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+.cmd-project-label { color: var(--ink-3); }
+.cmd-project select { color: var(--ink); }
+
+.cmd-breadcrumb { color: var(--ink-3); }
+.cmd-breadcrumb strong { color: var(--ink); }
+.cmd-crumb-sep { color: var(--line-strong); }
+
+.cmd-tabs {
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+}
+
+.cmd-tab {
+  color: var(--ink-2);
+  border-radius: 0;
+  box-shadow: inset 0 -2px 0 transparent;
+}
+
+.cmd-tab:hover { background: var(--copper-soft); color: var(--copper-strong); }
+
+.cmd-tab.active {
+  color: var(--copper-strong);
+  font-weight: 600;
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--copper);
+}
+
+.cmd-ribbon-btn { color: var(--ink-2); border-radius: var(--radius-sm); }
+
+.cmd-ribbon-btn:hover {
+  background: var(--copper-soft);
+  border-color: transparent;
+  color: var(--copper-strong);
+}
+
+.cmd-icon { color: var(--ink-2); border-radius: var(--radius-sm); }
+.cmd-icon:hover,
+.cmd-icon.open { background: var(--surface-2); color: var(--copper-strong); }
+.cmd-icon kbd { color: var(--ink-3); border-color: var(--line); }
+
+.cmd-role {
+  color: var(--ink-2);
+  border-color: var(--line);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+}
+
+.cmd-role.role-admin { color: var(--copper-strong); border-color: var(--copper); background: var(--copper-soft); }
+.cmd-role.role-analyst { color: var(--signal-strong); border-color: var(--signal); background: var(--signal-soft); }
+
+.cmd-avatar {
+  background: var(--basalt);
+  border-color: var(--basalt);
+  color: #ffffff;
+}
+
+.cmd-menu,
+.cmd-submenu {
+  background: var(--surface);
+  border-color: var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(10, 24, 38, 0.16), 0 1px 2px rgba(10, 24, 38, 0.08);
+}
+
+/* ---------------------------------------------------------------- surfaces */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+
+.panel-head { padding: 16px 18px; }
+.panel-body { padding: 18px; }
+
+.data-table th { color: var(--ink-3); font-size: 10.5px; }
+.data-table tbody tr:hover { background: var(--surface-2); }
+
+.panel-action { color: var(--copper); }
+
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  box-shadow: none;
+}
+
+/* The old corner glow was copper; a construction dashboard reads cleaner flat. */
+.kpi::after { display: none; }
+
+.section-note { border-radius: var(--radius-sm); }
+
+/* The twin stage keeps a dark, photographic surface, but in the new navy. */
+.twin-stage {
+  background: #071e2d;
+  border-color: #0d3049;
+}
+
+.twin-stage .viewer-surface {
+  background: radial-gradient(620px 320px at 50% 0%, #123f5c, #071e2d 72%);
+}
+
+.twin-label { border-radius: var(--radius-sm); }
+.twin-view-toggle { border-radius: var(--radius-sm); }
+
+/* ---------------------------------------------------------------- sign-in */
+
+.auth {
+  grid-template-columns: minmax(0, 1.15fr) minmax(400px, 0.85fr);
+  background: var(--surface);
+}
+
+.auth-brand {
+  color: #ffffff;
+  background:
+    linear-gradient(108deg, rgba(5, 26, 41, 0.94) 0%, rgba(5, 40, 64, 0.82) 46%, rgba(4, 30, 48, 0.52) 100%),
+    url('./assets/auth-hero.jpg') center / cover no-repeat;
+}
+
+.auth-brand::before {
+  background-image: none;
+  mask-image: none;
+}
+
+.auth-brand .brand-mark {
+  background: rgba(255, 255, 255, 0.94);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.auth-brand .brand-word { color: #ffffff; }
+.auth-brand .brand-word span { color: #7fc4ec; }
+.auth-brand .brand-sub { color: rgba(255, 255, 255, 0.6); }
+
+.auth-kicker { color: #8fd0f5; font-size: 10px; letter-spacing: 0.18em; }
+.auth-kicker::before { width: 26px; height: 2px; }
+
+.auth-copy h1 {
+  max-width: 15ch;
+  color: #ffffff;
+  font-size: clamp(40px, 4.6vw, 64px);
+  font-weight: 300;
+  line-height: 1.02;
+  letter-spacing: -0.035em;
+}
+
+.auth-copy h1 em { color: #ffc24a; font-weight: 300; }
+
+.auth-copy > p {
+  max-width: 460px;
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.auth-proof {
+  gap: 1px;
+  background: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--radius-md);
+}
+
+.auth-proof div { background: rgba(4, 28, 45, 0.62); }
+.auth-proof strong { color: #ffffff; font-size: 17px; font-weight: 600; }
+.auth-proof span { color: rgba(255, 255, 255, 0.66); font-size: 9.5px; }
+
+.auth-foot { color: rgba(255, 255, 255, 0.55); font-size: 10px; }
+
+.auth-panel { background: var(--surface); padding: 40px 28px; }
+
+.auth-form {
+  max-width: 392px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* The brand lives in the photographic column; repeating it in the form adds noise. */
+.auth-form .brand { display: none; }
+
+.auth-form h2 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: -0.035em;
+}
+
+.auth-form-sub { margin: 0 0 26px; font-size: 13.5px; color: var(--ink-3); }
+.auth-fields { gap: 16px; }
+.auth-form .field input { height: 46px; border-radius: var(--radius-sm); }
+.auth-submit { min-height: 48px; font-size: 13.5px; margin-top: 6px; }
+.auth-submit svg { transition: transform 140ms ease; }
+.auth-submit:hover svg { transform: translateX(3px); }
+
+.auth-error { border-radius: var(--radius-sm); font-size: 11.5px; }
+.auth-switch { font-size: 12px; margin-top: 22px; }
+.auth-switch button { color: var(--copper); }
+.auth-legal { font-size: 10px; }
+
+/* The reset screen has no brand column: keep it on the paper grey. */
+.auth-single {
+  background: var(--canvas);
+}
+
+.auth-single .auth-panel { background: transparent; }
+.auth-single .auth-form { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 32px; }
+
+@media (max-width: 980px) {
+  .auth { grid-template-columns: minmax(0, 1fr); }
+  /* A slim photographic band keeps the brand on small screens; the form comes first in reach. */
+  .auth-brand {
+    display: flex;
+    min-height: 0;
+    padding: 20px 22px;
+    background:
+      linear-gradient(105deg, rgba(5, 26, 41, 0.95), rgba(5, 40, 64, 0.72)),
+      url('./assets/auth-hero.jpg') center 32% / cover no-repeat;
+  }
+  .auth-brand .brand { padding: 0; }
+  .auth-brand .brand-mark { width: 40px; height: 40px; }
+  .auth-brand .brand-word { font-size: 18px; }
+  .auth-copy,
+  .auth-proof,
+  .auth-foot { display: none; }
+  .auth-panel { min-height: 0; padding: 34px 22px 46px; align-items: flex-start; }
+  .auth-form { max-width: 460px; }
+  .auth-form h2 { font-size: 28px; }
+}
+
+@media (max-width: 520px) {
+  .auth-panel { padding: 26px 18px 36px; }
+  .auth-form h2 { font-size: 25px; }
+  .auth-form .field input { height: 44px; }
+  .auth-submit { min-height: 46px; }
+}
