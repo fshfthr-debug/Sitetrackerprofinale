@@ -23,35 +23,35 @@ const WASM_PATH = `${process.env.PUBLIC_URL || ''}/`;
 const round = (value) => Math.round(value * 100) / 100;
 
 const styles = {
-  shell: { background: 'var(--surface)', borderRadius: '14px', border: '1px solid var(--line)', boxShadow: 'var(--shadow-xs)', overflow: 'hidden' },
+  shell: { background: 'var(--surface)', borderRadius: 'var(--radius-md)', border: '1px solid var(--line)', boxShadow: 'none', overflow: 'hidden' },
   topBar: { display: 'flex', alignItems: 'center', gap: '10px', padding: '12px 14px', borderBottom: '1px solid var(--line)', flexWrap: 'wrap' },
   toggle: { display: 'flex', gap: '6px', marginLeft: 'auto' },
   tab: { padding: '7px 12px', borderRadius: '7px', border: '1px solid var(--line)', background: 'var(--surface)', color: 'var(--ink-2)', fontWeight: 600, fontSize: '11px', cursor: 'pointer' },
-  tabOn: { padding: '7px 12px', borderRadius: '7px', border: '1px solid var(--copper)', background: 'var(--copper)', color: '#fffaf3', fontWeight: 600, fontSize: '11px', cursor: 'pointer' },
+  tabOn: { padding: '7px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--copper)', background: 'var(--copper)', color: '#ffffff', fontWeight: 600, fontSize: '11px', cursor: 'pointer' },
   body: { display: 'grid', gridTemplateColumns: '232px minmax(0, 1fr) 360px', minHeight: '540px' },
   side: { padding: '14px', borderRight: '1px solid var(--line)', overflow: 'auto', maxHeight: '620px', minWidth: 0 },
   sideRight: { padding: '14px', borderLeft: '1px solid var(--line)', overflow: 'auto', maxHeight: '620px', minWidth: 0 },
   stage: { position: 'relative', minWidth: 0, minHeight: '540px', background: 'var(--surface-2)' },
   canvasHost: { position: 'absolute', inset: 0 },
   toolbar: { position: 'absolute', top: '8px', left: '8px', right: '8px', display: 'flex', gap: '5px', flexWrap: 'wrap' },
-  tool: { padding: '6px 9px', fontSize: '10px', fontWeight: 600, border: '1px solid var(--line)', borderRadius: '6px', background: 'rgba(255,253,248,0.95)', color: 'var(--ink-2)', cursor: 'pointer' },
-  toolOn: { padding: '6px 9px', fontSize: '10px', fontWeight: 600, border: '1px solid var(--copper)', borderRadius: '6px', background: 'var(--copper)', color: '#fffaf3', cursor: 'pointer' },
+  tool: { padding: '6px 9px', fontSize: '10px', fontWeight: 600, border: '1px solid var(--line)', borderRadius: 'var(--radius-sm)', background: 'rgba(255,255,255,0.95)', color: 'var(--ink-2)', cursor: 'pointer' },
+  toolOn: { padding: '6px 9px', fontSize: '10px', fontWeight: 600, border: '1px solid var(--copper)', borderRadius: 'var(--radius-sm)', background: 'var(--copper)', color: '#ffffff', cursor: 'pointer' },
   h4: { margin: '0 0 8px', fontSize: '9px', letterSpacing: '0.12em', textTransform: 'uppercase', color: 'var(--ink-3)' },
   row: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12.5px', padding: '3px 0' },
   name: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   count: { color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', fontSize: '9px' },
   drop: { border: '1px dashed var(--line-strong)', borderRadius: '9px', padding: '14px 10px', textAlign: 'center', fontSize: '11px', color: 'var(--ink-3)', background: 'var(--surface-2)', cursor: 'pointer' },
   hint: { fontSize: '9.5px', color: 'var(--ink-3)', lineHeight: 1.5, margin: '6px 0 0' },
-  chip: { fontSize: '9px', background: 'rgba(31,39,35,0.86)', color: '#f6f1e7', padding: '5px 9px', borderRadius: '6px' },
-  chipWarn: { fontSize: '9px', background: 'var(--amber)', color: '#fffaf3', padding: '5px 9px', borderRadius: '6px' },
+  chip: { fontSize: '9px', background: 'rgba(10,42,64,0.88)', color: '#ffffff', padding: '5px 9px', borderRadius: 'var(--radius-sm)' },
+  chipWarn: { fontSize: '9px', background: 'var(--amber)', color: '#ffffff', padding: '5px 9px', borderRadius: 'var(--radius-sm)' },
   status: { position: 'absolute', left: '8px', bottom: '8px', right: '8px', display: 'flex', gap: '6px', flexWrap: 'wrap', pointerEvents: 'none' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: '11.5px', tableLayout: 'fixed' },
-  th: { textAlign: 'left', color: '#63748a', fontWeight: 600, fontSize: '10.5px', textTransform: 'uppercase', padding: '3px 4px', borderBottom: '1px solid #eef1f5' },
-  td: { padding: '3px 4px', borderBottom: '1px solid #f2f5f8', overflowWrap: 'break-word', verticalAlign: 'top' },
+  th: { textAlign: 'left', color: 'var(--ink-3)', fontWeight: 600, fontSize: '10.5px', textTransform: 'uppercase', padding: '3px 4px', borderBottom: '1px solid var(--line)' },
+  td: { padding: '3px 4px', borderBottom: '1px solid var(--line)', overflowWrap: 'break-word', verticalAlign: 'top' },
   kv: { display: 'grid', gridTemplateColumns: '78px 1fr', gap: '3px 8px', fontSize: '12px', margin: 0 },
-  dt: { color: '#63748a' },
+  dt: { color: 'var(--ink-3)' },
   dd: { margin: 0, overflowWrap: 'break-word' },
-  measure: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '3px 0', borderBottom: '1px solid #f2f5f8' },
+  measure: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '3px 0', borderBottom: '1px solid var(--line)' },
   error: { margin: '10px 14px', padding: '10px', borderRadius: '8px', background: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '10px', lineHeight: 1.5 },
   warning: { margin: '10px 14px', padding: '10px', borderRadius: '8px', background: 'rgba(240,140,0,0.12)', color: '#8a4b08', fontSize: '10px', lineHeight: 1.5 }
 };
@@ -140,7 +140,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
     if (!host) return undefined;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf1ede5);
+    scene.background = new THREE.Color(0xeef2f7);
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 5000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -165,7 +165,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
     fill.position.set(-25, 20, -30);
     scene.add(fill);
 
-    const grid = new THREE.GridHelper(100, 40, 0xd2c9ba, 0xe9e3d8);
+    const grid = new THREE.GridHelper(100, 40, 0xc9d4e0, 0xe4eaf1);
     scene.add(grid);
 
     const modelRoot = new THREE.Group();
@@ -343,7 +343,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
       const size = Math.max(0.025 * (engine.bbox ? engine.bbox.getSize(new THREE.Vector3()).length() / 10 : 1), 0.02);
       const dot = new THREE.Mesh(
         new THREE.SphereGeometry(size, 12, 12),
-        new THREE.MeshBasicMaterial({ color: 0xff6b35, depthTest: false })
+        new THREE.MeshBasicMaterial({ color: 0x0063a3, depthTest: false })
       );
       dot.renderOrder = 10;
       dot.position.copy(point);
@@ -354,7 +354,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
         const distance = a.distanceTo(b) * engine.unitScale;
         const line = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints([a, b]),
-          new THREE.LineBasicMaterial({ color: 0xff6b35, depthTest: false })
+          new THREE.LineBasicMaterial({ color: 0x0063a3, depthTest: false })
         );
         line.renderOrder = 10;
         measureGroup.add(line);
@@ -1009,11 +1009,11 @@ export default function BimViewer({ token, projects = [], projectId }) {
           />
         </label>
         {summary && (
-          <span style={{ fontSize: '12px', color: '#63748a' }}>
+          <span style={{ fontSize: '12px', color: 'var(--ink-3)' }}>
             {summary.fileName} · {summary.schema} · {summary.elements} elements
           </span>
         )}
-        <span style={{ fontSize: '11px', color: '#8794a5' }}>
+        <span style={{ fontSize: '11px', color: 'var(--ink-3)' }}>
           geometry: {summary ? (summary.source === 'ifc' ? 'imported from IFC' : 'imported from glTF') : 'nothing loaded'}
         </span>
       </div>
@@ -1086,7 +1086,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
             max="100"
             value={section.value}
             onChange={(event) => applySection({ ...section, value: Number(event.target.value) })}
-            style={{ width: '100%', marginTop: '8px', accentColor: '#ff6b35' }}
+            style={{ width: '100%', marginTop: '8px', accentColor: 'var(--copper)' }}
           />
           <p style={styles.hint}>A real clipping plane on every material — only geometry in front of it is drawn.</p>
         </div>

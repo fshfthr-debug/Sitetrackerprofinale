@@ -4004,7 +4004,7 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
     if (!mount || (rows.length === 0 && !hasTerrain && !showModel)) return undefined;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xf4f1ea);
+    scene.background = new THREE.Color(0xeef2f7);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
 

@@ -36,7 +36,7 @@
   position: fixed; inset: 0 0 auto 0; z-index: 80;
   display: flex; flex-direction: column; padding: 0;
   background:
-    radial-gradient(600px 120px at 0% 0%, rgba(196, 124, 70, 0.16), transparent 70%),
+    radial-gradient(600px 120px at 0% 0%, rgba(0, 99, 163, 0.16), transparent 70%),
     #101614;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   color: #e9eeeb; font-family: var(--font-sans);
@@ -79,7 +79,7 @@
   border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.04);
   color: #cfd8d3; cursor: pointer;
 }
-.cmd-modules-btn:hover, .cmd-modules-btn.open { background: rgba(196, 124, 70, 0.22); color: #fff; }
+.cmd-modules-btn:hover, .cmd-modules-btn.open { background: rgba(0, 99, 163, 0.14); border-color: rgba(0, 99, 163, 0.45); color: var(--copper-strong); }
 .cmd-modules-menu { top: calc(100% + 8px); left: 0; max-height: min(70vh, 520px); overflow-y: auto; }
 
 .cmd-project {
@@ -115,7 +115,7 @@
   height: 24px; padding: 0 11px; border-radius: 4px; cursor: pointer; white-space: nowrap;
 }
 .cmd-tab:hover { color: #f2f6f3; background: rgba(255, 255, 255, 0.06); }
-.cmd-tab.active { background: #f4f1ea; color: #161b18; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
+.cmd-tab.active { background: var(--copper-soft); color: var(--copper-strong); box-shadow: inset 0 -2px 0 var(--copper); }
 
 .cmdbar-right { margin-left: auto; }
 .cmd-icon {
@@ -133,11 +133,11 @@
   padding: 4px 8px; border-radius: 99px; border: 1px solid rgba(255, 255, 255, 0.14);
   color: #cfd8d3; background: rgba(255, 255, 255, 0.05); white-space: nowrap;
 }
-.cmd-role.role-admin { color: #f0c79a; border-color: rgba(196, 124, 70, 0.5); background: rgba(196, 124, 70, 0.16); }
-.cmd-role.role-analyst { color: #a9d8c4; border-color: rgba(27, 122, 92, 0.5); background: rgba(27, 122, 92, 0.18); }
+.cmd-role.role-admin { color: var(--copper-strong); border-color: rgba(0, 99, 163, 0.45); background: var(--copper-soft); }
+.cmd-role.role-analyst { color: var(--signal-strong); border-color: rgba(22, 122, 91, 0.4); background: var(--signal-soft); }
 .cmd-avatar {
   width: 28px; height: 28px; border-radius: 50%; border: 1px solid rgba(255, 255, 255, 0.18);
-  background: linear-gradient(160deg, #2a3530, #1a211e); color: #f1e7da;
+  background: linear-gradient(160deg, #13415f, #0a2a40); color: #ffffff;
   font-size: 9.5px; font-weight: 650; cursor: pointer;
 }
 .cmd-popover-wrap { position: relative; }
@@ -187,7 +187,7 @@
 .cmd-menu {
   /* Above every WebGL canvas, glass dock and dialog in the app (canvases sit at 20-40). */
   position: absolute; top: calc(100% + 4px); left: 0; z-index: 9999; min-width: var(--ui-menu-min-w);
-  padding: 4px; border-radius: var(--ui-menu-radius); background: #fffdf9;
+  padding: 4px; border-radius: var(--ui-menu-radius); background: #ffffff;
   border: 1px solid var(--line-strong); color: var(--ink);
   box-shadow: 0 10px 28px rgba(10, 14, 12, 0.22), 0 1px 2px rgba(10, 14, 12, 0.12);
 }
@@ -220,7 +220,7 @@
 .cmd-menu-dot { width: 14px; height: 1px; background: var(--line-strong); }
 .cmd-submenu {
   position: absolute; left: calc(100% + 3px); top: -4px; min-width: var(--ui-menu-min-w); padding: 4px;
-  border-radius: var(--ui-menu-radius); background: #fffdf9; border: 1px solid var(--line-strong);
+  border-radius: var(--ui-menu-radius); background: #ffffff; border: 1px solid var(--line-strong);
   box-shadow: 0 10px 28px rgba(10, 14, 12, 0.22), 0 1px 2px rgba(10, 14, 12, 0.12); z-index: 10000;
 }
 /* A submenu opened near the right edge flips inward instead of running off-screen. */
@@ -258,7 +258,7 @@
   color: #c7d1cc; font-size: 10px; cursor: pointer; white-space: nowrap;
 }
 .studio-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
-.studio-btn.active { border-color: rgba(196, 124, 70, 0.55); color: #f2d6bb; background: rgba(196, 124, 70, 0.16); }
+.studio-btn.active { border-color: rgba(0, 99, 163, 0.55); color: var(--copper-soft); background: rgba(0, 99, 163, 0.18); }
 
 .gis-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 .gis-map-column { position: absolute; inset: 0; }
@@ -290,7 +290,7 @@
   --surface-raised: rgba(255, 255, 255, 0.07);
   --ink: #e7eeea; --ink-2: #c4cec9; --ink-3: #9aa8a2; --muted: #8c9a94;
   --line: rgba(255, 255, 255, 0.1); --line-strong: rgba(255, 255, 255, 0.17);
-  --copper: #d79a63; --copper-soft: rgba(196, 124, 70, 0.18);
+  --copper: #63b8e8; --copper-soft: rgba(0, 99, 163, 0.18);
   --shadow-xs: none; --shadow-sm: none;
 }
 .gis-rail.gis-glass.collapsed { transform: translateX(calc(-100% - 20px)); opacity: 0; pointer-events: none; }
@@ -323,7 +323,7 @@
   --surface-3: rgba(255, 255, 255, 0.09);
   --ink: #e7eeea; --ink-2: #c4cec9; --ink-3: #9aa8a2;
   --line: rgba(255, 255, 255, 0.1); --line-strong: rgba(255, 255, 255, 0.17);
-  --copper: #d79a63; --danger: #f1998f; --signal: #7fd3b2; --danger-soft: rgba(168, 63, 55, 0.25);
+  --copper: #63b8e8; --danger: #f1998f; --signal: #7fd3b2; --danger-soft: rgba(168, 63, 55, 0.25);
 }
 .gis-inspector.gis-glass.collapsed { transform: translateX(calc(100% + 20px)); opacity: 0; pointer-events: none; }
 
@@ -413,14 +413,14 @@
   border: 1px solid transparent; border-radius: 6px; background: transparent; color: #b6c2bc; cursor: pointer;
 }
 .tool-btn:hover { background: rgba(255, 255, 255, 0.09); color: #fff; }
-.tool-btn.active { background: rgba(196, 124, 70, 0.24); border-color: rgba(196, 124, 70, 0.6); color: #ffd9b8; }
+.tool-btn.active { background: rgba(0, 99, 163, 0.26); border-color: rgba(0, 99, 163, 0.6); color: #cfe6f7; }
 .tool-dock-divider { height: 1px; margin: 3px 4px; background: rgba(255, 255, 255, 0.14); flex: 0 0 auto; }
 
 .tool-tip {
   position: absolute; left: calc(100% + 9px); top: 50%; transform: translateY(-50%);
   display: none; flex-direction: column; gap: 2px; width: 210px; padding: 7px 9px;
   font-size: 11px; line-height: 1.4;
-  border-radius: 7px; background: #fffdf9; color: var(--ink); border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm); background: #ffffff; color: var(--ink); border: 1px solid var(--line);
   box-shadow: 0 12px 28px rgba(10, 14, 12, 0.28); pointer-events: none; z-index: 40;
 }
 .tool-btn:hover .tool-tip { display: flex; }
@@ -447,23 +447,23 @@
   border: 0; background: transparent; color: #b6c2bc; font-size: 10px; padding: 3px 9px;
   border-radius: 4px; cursor: pointer; white-space: nowrap;
 }
-.subbar-seg button.active { background: #f4f1ea; color: #161b18; font-weight: 600; }
+.subbar-seg button.active { background: var(--copper-soft); color: var(--copper-strong); font-weight: 600; }
 .subbar-check { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: #b6c2bc; white-space: nowrap; }
-.subbar-check input { accent-color: #c47c46; }
+.subbar-check input { accent-color: var(--copper); }
 .subbar-field { display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: #8b9892; white-space: nowrap; }
 .subbar-field select {
   background: rgba(0, 0, 0, 0.3); border: 1px solid rgba(255, 255, 255, 0.14); color: #e7eeea;
   font-size: 10px; border-radius: 5px; padding: 2px 4px;
 }
 .subbar-field select option { color: #1a1d19; }
-.subbar-readout { font-family: var(--font-mono); font-size: 10px; color: #ffd9b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subbar-readout { font-family: var(--font-mono); font-size: 10px; color: #cfe6f7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .subbar-spacer { flex: 1; }
 .subbar-action {
   border: 1px solid rgba(255, 255, 255, 0.16); background: rgba(255, 255, 255, 0.05); color: #dfe7e2;
   font-size: 10px; padding: 3px 9px; border-radius: 5px; cursor: pointer; white-space: nowrap;
 }
 .subbar-action:hover { background: rgba(255, 255, 255, 0.12); }
-.subbar-action.primary { background: #c47c46; border-color: #c47c46; color: #1b130b; font-weight: 600; }
+.subbar-action.primary { background: var(--copper); border-color: var(--copper); color: #ffffff; font-weight: 600; }
 .subbar-hint { font-size: 9.5px; color: #7f8d87; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------------------------------------------------------------- telemetry */
@@ -482,8 +482,8 @@
 .tel-spacer { flex: 1; }
 .tel-theme { color: #7f8d87; }
 .tel-badge {
-  padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(196, 124, 70, 0.45);
-  color: #f0c79a; background: rgba(196, 124, 70, 0.14); font-size: 9px;
+  padding: 2px 7px; border-radius: 4px; border: 1px solid rgba(0, 99, 163, 0.45);
+  color: #cfe6f7; background: rgba(0, 99, 163, 0.18); font-size: 9px;
 }
 
 /* ----------------------------------------------------------- floating panels */
@@ -496,8 +496,8 @@
   --surface: rgba(255, 255, 255, 0.06); --surface-2: rgba(255, 255, 255, 0.04);
   --surface-3: rgba(255, 255, 255, 0.1); --ink: #e7eeea; --ink-2: #c4cec9; --ink-3: #9aa8a2;
   --line: rgba(255, 255, 255, 0.12); --line-strong: rgba(255, 255, 255, 0.18);
-  --danger: #f1998f; --signal: #7fd3b2; --copper: #d79a63;
-  --copper-soft: rgba(196, 124, 70, 0.2); --danger-soft: rgba(168, 63, 55, 0.24);
+  --danger: #f1998f; --signal: #7fd3b2; --copper: #63b8e8;
+  --copper-soft: rgba(0, 99, 163, 0.2); --danger-soft: rgba(168, 63, 55, 0.24);
 }
 .float-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
@@ -520,7 +520,7 @@
   flex: 1; border: 0; background: transparent; color: #adb9b3; font-size: 10px;
   padding: 5px 6px; border-radius: 5px; cursor: pointer;
 }
-.float-seg button.active { background: #f4f1ea; color: #161b18; font-weight: 600; }
+.float-seg button.active { background: var(--copper-soft); color: var(--copper-strong); font-weight: 600; }
 .float-seg.small button { font-size: 9.5px; padding: 4px 5px; }
 .float-run { width: 100%; justify-content: center; }
 .float-error {
@@ -584,19 +584,19 @@ html[data-gis-theme='light'] .gis-studio { background: #e8e4da; }
 html[data-gis-theme='light'] .gis-studio-bar { background: #f7f4ee; border-bottom-color: rgba(29, 39, 48, 0.12); color: var(--ink-2); }
 html[data-gis-theme='light'] .studio-project label,
 html[data-gis-theme='light'] .studio-context { color: var(--ink-3); }
-html[data-gis-theme='light'] .studio-project select { background: #fffdf9; border-color: var(--line-strong); color: var(--ink); }
-html[data-gis-theme='light'] .studio-btn { background: #fffdf9; border-color: var(--line-strong); color: var(--ink-2); }
+html[data-gis-theme='light'] .studio-project select { background: #ffffff; border-color: var(--line-strong); color: var(--ink); }
+html[data-gis-theme='light'] .studio-btn { background: #ffffff; border-color: var(--line-strong); color: var(--ink-2); }
 html[data-gis-theme='light'] .studio-btn:hover { background: var(--surface-3); color: var(--ink); }
 html[data-gis-theme='light'] .studio-btn.active { background: var(--copper-soft); border-color: var(--copper); color: var(--copper-strong); }
 html[data-gis-theme='light'] .gis-glass {
-  background: rgba(255, 253, 249, 0.86); border-color: rgba(29, 39, 48, 0.14);
-  box-shadow: 0 18px 40px rgba(32, 28, 20, 0.18); color: var(--ink);
-  --surface: #fffdf9; --surface-2: #f9f6ef; --surface-3: #f0ece3; --surface-raised: #ffffff;
-  --ink: #1a1d19; --ink-2: #4c524a; --ink-3: #6f756b;
-  --line: #e1dbd0; --line-strong: #cec6b7;
-  --copper: #a45f30; --copper-soft: #f2e2d2;
-  --danger: #a83f37; --danger-soft: #f8e5e2; --signal: #1b7a5c;
-  --shadow-xs: 0 1px 2px rgba(37, 31, 22, 0.04); --shadow-sm: 0 2px 8px rgba(37, 31, 22, 0.05);
+  background: rgba(255, 255, 255, 0.9); border-color: rgba(10, 24, 38, 0.12);
+  box-shadow: 0 18px 40px rgba(10, 24, 38, 0.12); color: var(--ink);
+  --surface: #ffffff; --surface-2: #f6f8fa; --surface-3: #edf1f4; --surface-raised: #ffffff;
+  --ink: #16191c; --ink-2: #3b4248; --ink-3: #5f676e;
+  --line: #e0e5ea; --line-strong: #c7d0d7;
+  --copper: #0063a3; --copper-soft: #e6f2fa; --copper-strong: #004d80;
+  --danger: #a8352c; --danger-soft: #fbe9e7; --signal: #167a5b;
+  --shadow-xs: 0 1px 2px rgba(10, 24, 38, 0.04); --shadow-sm: 0 2px 8px rgba(10, 24, 38, 0.05);
 }
 html[data-gis-theme='light'] .gis-rail.gis-glass h3 { color: var(--ink); }
 html[data-gis-theme='light'] .gis-rail.gis-glass input,
@@ -634,26 +634,26 @@ html[data-gis-theme='light'] .subbar-readout { color: var(--copper-strong); }
 html[data-gis-theme='light'] .subbar-action { background: var(--surface); border-color: var(--line-strong); color: var(--ink-2); }
 html[data-gis-theme='light'] .subbar-action.primary { background: var(--copper); border-color: var(--copper); color: #fffaf3; }
 html[data-gis-theme='light'] .subbar-hint { color: var(--ink-3); }
-html[data-gis-theme='light'] .telemetry { background: #f7f4ee; border-top-color: rgba(29, 39, 48, 0.14); color: var(--ink-2); }
+html[data-gis-theme='light'] .telemetry { background: var(--surface-2); border-top-color: rgba(10, 24, 38, 0.12); color: var(--ink-2); }
 html[data-gis-theme='light'] .tel-key { color: var(--ink-3); }
 html[data-gis-theme='light'] .tel-brand { color: var(--ink); }
 html[data-gis-theme='light'] .tel-theme { color: var(--ink-3); }
-html[data-gis-theme='light'] .tel-badge { background: var(--copper-soft); color: var(--copper-strong); border-color: rgba(164, 95, 48, 0.4); }
+html[data-gis-theme='light'] .tel-badge { background: var(--copper-soft); color: var(--copper-strong); border-color: rgba(0, 99, 163, 0.35); }
 html[data-gis-theme='light'] .gis-studio .map-search { background: rgba(255, 253, 249, 0.92); border-color: var(--line-strong); color: var(--ink); }
 html[data-gis-theme='light'] .gis-studio .map-search input { color: var(--ink); }
 html[data-gis-theme='light'] .gis-studio .map-search input::placeholder { color: var(--ink-3); }
-html[data-gis-theme='light'] .gis-studio .map-search-results { background: #fffdf9; border-color: var(--line-strong); color: var(--ink); }
+html[data-gis-theme='light'] .gis-studio .map-search-results { background: #ffffff; border-color: var(--line-strong); color: var(--ink); }
 html[data-gis-theme='light'] .gis-studio .map-search-result { color: var(--ink); }
 html[data-gis-theme='light'] .gis-studio .map-search-result span { color: var(--ink-3); }
 html[data-gis-theme='light'] .gis-studio .map-badge { background: rgba(255, 253, 249, 0.92); border-color: var(--line-strong); color: var(--ink-2); }
 html[data-gis-theme='light'] .gis-studio .map-geolocate { background: rgba(255, 253, 249, 0.92); border-color: var(--line-strong); color: var(--ink-2); }
 html[data-gis-theme='light'] .gis-float {
   background: rgba(255, 253, 249, 0.94); border-color: rgba(29, 39, 48, 0.14); color: var(--ink);
-  --surface: #fffdf9; --surface-2: #f9f6ef; --surface-3: #f0ece3;
-  --ink: #1a1d19; --ink-2: #4c524a; --ink-3: #6f756b;
-  --line: #e1dbd0; --line-strong: #cec6b7;
-  --danger: #a83f37; --signal: #1b7a5c; --copper: #a45f30;
-  --copper-soft: #f2e2d2; --danger-soft: #f8e5e2;
+  --surface: #ffffff; --surface-2: #f6f8fa; --surface-3: #edf1f4;
+  --ink: #16191c; --ink-2: #3b4248; --ink-3: #5f676e;
+  --line: #e0e5ea; --line-strong: #c7d0d7;
+  --danger: #a8352c; --signal: #167a5b; --copper: #0063a3;
+  --copper-soft: #e6f2fa; --copper-strong: #004d80; --danger-soft: #fbe9e7;
 }
 html[data-gis-theme='light'] .float-head { border-bottom-color: var(--line); }
 html[data-gis-theme='light'] .float-head small,

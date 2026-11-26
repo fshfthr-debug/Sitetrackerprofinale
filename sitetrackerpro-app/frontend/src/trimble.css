@@ -233,6 +233,23 @@ h1, h2, h3, h4 { letter-spacing: -0.025em; }
   border-color: var(--copper-strong);
 }
 
+/* A disabled action reads as unavailable, not as a faint blue button. */
+.btn:disabled,
+.btn[disabled] {
+  color: var(--ink-3);
+  background: var(--surface-3);
+  border-color: var(--line);
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.btn-primary:disabled,
+.btn-primary[disabled] {
+  color: var(--ink-3);
+  background: var(--surface-3);
+  border-color: var(--line);
+}
+
 .btn-copper { color: #ffffff; }
 .btn-sm { min-height: 30px; font-size: 11px; }
 
@@ -401,18 +418,29 @@ textarea:focus-visible {
 
 .section-note { border-radius: var(--radius-sm); }
 
-/* The twin stage keeps a dark, photographic surface, but in the new navy. */
+/* 3D stages are light, like a product screenshot: the model sits on a pale grey
+   floor so the white chrome around it stays seamless. */
 .twin-stage {
-  background: #071e2d;
-  border-color: #0d3049;
+  background: var(--surface-3);
+  border-color: var(--line);
+  border-radius: var(--radius-md);
 }
 
 .twin-stage .viewer-surface {
-  background: radial-gradient(620px 320px at 50% 0%, #123f5c, #071e2d 72%);
+  background: radial-gradient(620px 320px at 50% 0%, #ffffff, #eef2f6 72%);
 }
 
-.twin-label { border-radius: var(--radius-sm); }
-.twin-view-toggle { border-radius: var(--radius-sm); }
+.twin-label, .viewer-badge { border-radius: var(--radius-sm); }
+
+.twin-view-toggle {
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.92);
+  border-color: var(--line);
+}
+
+.twin-view-toggle .viewer-mode { color: var(--ink-3); }
+.twin-view-toggle .viewer-mode:hover { color: var(--ink); }
+.twin-view-toggle .viewer-mode.active { color: var(--copper-strong); background: var(--copper-soft); }
 
 /* ---------------------------------------------------------------- sign-in */
 
