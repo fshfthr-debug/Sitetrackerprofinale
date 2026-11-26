@@ -9,6 +9,11 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { buildCsv, downloadCsv, safeFilePart, todayStamp } from './csv';
 import { CONTROL_POINT_STATUSES, INITIAL_CONTROL_POINT_STATUSES, parseControlPointText, statusLabel } from './controlPoints';
 import { loadTwinModelWithConversion, twinModelKind, twinModelUrl } from './bim/twinModel';
+import moduleGisPhoto from './assets/module-gis.jpg';
+import moduleBimPhoto from './assets/module-bim.jpg';
+import moduleSurveyPhoto from './assets/module-survey.jpg';
+import moduleCostPhoto from './assets/module-cost.jpg';
+import moduleAssurancePhoto from './assets/module-assurance.jpg';
 
 const BimViewer = React.lazy(() => import('./BimViewer'));
 
@@ -1901,6 +1906,30 @@ function compactValue(value) {
   return amount.toFixed(0);
 }
 
+// The module band on the overview: one tile per workspace the app actually opens.
+const OVERVIEW_MODULES = [
+  {
+    screen: 'gis', icon: 'map', photo: moduleGisPhoto, title: 'Map & GIS',
+    copy: 'Basemaps, layers and georeferencing that place every record on the site.'
+  },
+  {
+    screen: '3d-viewer', icon: 'cube', photo: moduleBimPhoto, title: '3D BIM / IFC',
+    copy: 'Open IFC and DWG models beside the field records they describe.'
+  },
+  {
+    screen: 'surveying', icon: 'mountain', photo: moduleSurveyPhoto, title: 'Terrain & Survey',
+    copy: 'Control points, total-station work and ground truth captured in the field.'
+  },
+  {
+    screen: 'quantity-survey', icon: 'calculator', photo: moduleCostPhoto, title: 'Cost & Quantities',
+    copy: 'Quantities, takeoffs and budget control tied back to the modelled scope.'
+  },
+  {
+    screen: 'fraud', icon: 'shield', photo: moduleAssurancePhoto, title: 'Payment assurance',
+    copy: 'Risk scoring that compares progress, spend and evidence before certification.'
+  }
+];
+
 function DashboardScreen({ token, projects, activeProject, setSelectedProject, setCurrentScreen }) {
   const [stats, setStats] = useState(null);
   const [signals, setSignals] = useState({});
@@ -2050,6 +2079,36 @@ function DashboardScreen({ token, projects, activeProject, setSelectedProject, s
           <div className="kpi-meta"><strong>{reported}</strong> of {projects.length} projects reporting</div>
         </div>
       </div>
+
+      <section className="module-band">
+        <div className="module-band-head">
+          <div className="eyebrow">Modules</div>
+          <h2 className="module-band-title">One platform, every stage of the site</h2>
+          <p className="module-band-sub">
+            Capture, georeference, model and certify in one connected record. Open a module to see the
+            workspace behind the numbers above.
+          </p>
+        </div>
+        <div className="module-tiles">
+          {OVERVIEW_MODULES.map(module => (
+            <article className="module-tile" key={module.screen}>
+              <button
+                className="module-tile-media"
+                onClick={() => setCurrentScreen(module.screen)}
+                aria-label={`Open ${module.title}`}
+              >
+                <img src={module.photo} alt={module.title} loading="lazy" />
+                <span className="module-tile-icon"><Icon name={module.icon} size={17} /></span>
+              </button>
+              <h3 className="module-tile-title">{module.title}</h3>
+              <p className="module-tile-copy">{module.copy}</p>
+              <button className="module-tile-link" onClick={() => setCurrentScreen(module.screen)}>
+                Learn more <Icon name="chevronRight" size={11} />
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
 
       <div className="dash-grid">
         <div className="stack">
