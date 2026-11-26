@@ -50,6 +50,32 @@ const ACTIONS = {
   DELETE_ALIGNMENT_POINT: 'delete.alignment_point'
 };
 
+// The same wording the screen uses, kept server-side so the CSV reads like the app instead of
+// like a code book ('auth.login' means nothing to the client receiving the file).
+const ACTION_LABELS = {
+  'auth.login': 'Signed in',
+  'auth.login_failed': 'Failed sign-in',
+  'auth.mfa_login': 'Signed in with authenticator',
+  'auth.mfa_enabled': 'Two-factor turned on',
+  'auth.mfa_disabled': 'Two-factor turned off',
+  'user.created': 'Account created',
+  'user.role_changed': 'Role changed',
+  'upload.bim': 'BIM / take-off upload',
+  'upload.gis_dataset': 'GIS dataset upload',
+  'upload.survey_points': 'Survey points upload',
+  'upload.control_points': 'Control points upload',
+  'delete.project': 'Project deleted',
+  'delete.bim_components': 'Take-off rows deleted',
+  'delete.gis_dataset': 'GIS dataset deleted',
+  'delete.gis_query': 'Saved query deleted',
+  'delete.alignment_point': 'Alignment point deleted'
+};
+
+// A download is opened on somebody else's machine and has to be a complete document, so it is
+// not paged. The cap is only there so a decade-old trail cannot exhaust the instance's memory;
+// a client needing more than this exports month by month using the date filters.
+const EXPORT_LIMIT = 20000;
+
 function clip(value, max) {
   if (value === null || value === undefined) return null;
   const text = String(value);
@@ -275,8 +301,80 @@ async function listEvents(db, options = {}) {
   };
 }
 
+// ======================= CSV EXPORT =======================
+// Excel decides a cell's type by its first character: '=' or '+' at the start of a summary
+// turns the text into a formula and can run when the file is opened. Nothing in the trail
+// legitimately starts with those, so they are escaped to text before quoting.
+function csvCell(value) {
+  if (value === null || value === undefined) return '';
+  let text = String(value);
+  if (/^[=+\-@\t\r]/.test(text)) text = "'" + text;
+  return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function isoWhen(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+const CSV_COLUMNS = [
+  { header: 'When (UTC)', value: event => isoWhen(event.createdAt) },
+  { header: 'Event', value: event => ACTION_LABELS[event.action] || event.action },
+  { header: 'Outcome', value: event => event.outcome || '' },
+  { header: 'Who', value: event => event.actorName || '' },
+  { header: 'Email', value: event => event.actorEmail || '' },
+  { header: 'Role', value: event => event.actorRole || '' },
+  { header: 'What happened', value: event => event.summary || '' },
+  { header: 'Project', value: event => (event.projectId === null || event.projectId === undefined ? '' : 'Project ' + event.projectId) },
+  { header: 'Target', value: event => [event.targetType, event.targetId].filter(Boolean).join(' ') },
+  { header: 'IP address', value: event => event.ip || '' },
+  { header: 'Browser', value: event => event.userAgent || '' },
+  { header: 'Detail', value: event => (event.detail ? JSON.stringify(event.detail) : '') }
+];
+
+/**
+ * The whole filtered trail as CSV text. No byte-order mark here: the browser's download helper
+ * adds it, which is where every other export in the app gets it too.
+ */
+function toCsv(events) {
+  const lines = [CSV_COLUMNS.map(column => csvCell(column.header)).join(',')];
+  for (const event of events || []) {
+    lines.push(CSV_COLUMNS.map(column => csvCell(column.value(event))).join(','));
+  }
+  return lines.join('\r\n') + '\r\n';
+}
+
+function exportFilename(now = new Date()) {
+  return 'sitetrackerpro-audit-' + now.toISOString().slice(0, 10) + '.csv';
+}
+
+/**
+ * Every event matching the filters, newest first, up to the export cap. No count query: the file
+ * is generated from the rows themselves, so a second round trip would only add latency.
+ */
+async function exportEvents(db, options = {}) {
+  const { where, params } = buildFilter(options);
+  const result = await db.query(
+    `SELECT ${SELECT_COLUMNS}
+       FROM audit_events
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length + 1}`,
+    params.concat([EXPORT_LIMIT])
+  );
+  const events = (result.rows || []).map(shape);
+  return { events, truncated: events.length >= EXPORT_LIMIT };
+}
+
 module.exports = {
   ACTIONS,
+  ACTION_LABELS,
+  EXPORT_LIMIT,
+  toCsv,
+  csvCell,
+  exportEvents,
+  exportFilename,
   DEFAULT_LIMIT,
   MAX_LIMIT,
   MAX_SUMMARY,

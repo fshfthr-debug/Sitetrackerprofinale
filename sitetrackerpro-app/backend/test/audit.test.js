@@ -172,6 +172,61 @@ test('a page comes back with the total and whether more exist', async () => {
   assert.deepEqual(select.params, [audit.MAX_LIMIT, 0]);
 });
 
+test('the CSV export reads the screen\'s filters and holds every row, not a page', async () => {
+  const db = fakeDb({ rows: [{ id: 1, action: 'auth.login', summary: 'Signed in', created_at: '2026-11-26T10:00:00.000Z' }] });
+  const result = await audit.exportEvents(db, { action: 'auth.', from: '2026-11-01' });
+
+  const select = db.calls[db.calls.length - 1];
+  assert.match(select.sql, /action LIKE \$1/);
+  assert.match(select.sql, /created_at >= \$2/);
+  assert.match(select.sql, /LIMIT \$3/);
+  assert.equal(select.params[0], 'auth.%');
+  assert.equal(select.params[2], audit.EXPORT_LIMIT);
+  assert.equal(result.events.length, 1);
+  assert.equal(result.truncated, false);
+});
+
+test('the CSV opens cleanly in a spreadsheet: header row, CRLF, readable labels', () => {
+  const csv = audit.toCsv([{
+    id: 4,
+    createdAt: '2026-11-26T10:00:00.000Z',
+    action: 'user.role_changed',
+    outcome: 'success',
+    actorName: 'Boss',
+    actorEmail: 'boss@example.com',
+    actorRole: 'admin',
+    summary: 'Changed ali@example.com from viewer to analyst',
+    projectId: 5,
+    targetType: 'user',
+    targetId: '9',
+    ip: '203.0.113.10',
+    userAgent: 'Mozilla/5.0',
+    detail: { from: 'viewer', to: 'analyst' }
+  }]);
+
+  const lines = csv.split('\r\n').filter(Boolean);
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], /^When \(UTC\),Event,Outcome,Who,Email,Role,What happened,Project,Target,IP address,Browser,Detail$/);
+  assert.match(lines[1], /^2026-11-26T10:00:00\.000Z,Role changed,success,Boss,boss@example\.com,admin,Changed ali@example\.com from viewer to analyst,Project 5,user 9,203\.0\.113\.10,Mozilla\/5\.0,/);
+  // The nested detail keeps its own quotes escaped rather than breaking the row apart.
+  assert.match(lines[1], /"\{""from"":""viewer"",""to"":""analyst""\}"$/);
+  assert.equal(audit.exportFilename(new Date('2026-11-26T10:00:00Z')), 'sitetrackerpro-audit-2026-11-26.csv');
+});
+
+test('an empty trail still produces a readable file, and a formula cannot run', () => {
+  const headerOnly = audit.toCsv([]).split('\r\n').filter(Boolean);
+  assert.equal(headerOnly.length, 1);
+  assert.match(headerOnly[0], /^When \(UTC\)/);
+
+  const formula = audit.csvCell('=HYPERLINK("http://example.com")');
+  assert.match(formula, /^"'=HYPERLINK/);
+  assert.match(formula, /""http:\/\/example\.com""/);
+  assert.match(formula, /"$/);
+  assert.equal(audit.csvCell('ali, bob'), '"ali, bob"');
+  assert.equal(audit.csvCell('plain'), 'plain');
+  assert.equal(audit.csvCell(null), '');
+});
+
 test('a broken offset falls back to the first page, and the last page says so', async () => {
   assert.equal(audit.normaliseOffset('-20'), 0);
   assert.equal(audit.normaliseOffset('nonsense'), 0);

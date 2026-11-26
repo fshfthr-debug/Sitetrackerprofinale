@@ -862,6 +862,8 @@ function AuditScreen({ token }) {
   const [error, setError] = useState('');
   const [draft, setDraft] = useState({ action: '', actor: '', from: '', to: '' });
   const [applied, setApplied] = useState({ action: '', actor: '', from: '', to: '' });
+  const [exporting, setExporting] = useState(false);
+  const [notice, setNotice] = useState('');
 
   const queryFor = (filters, offset) => ({
     action: filters.action || undefined,
@@ -917,13 +919,41 @@ function AuditScreen({ token }) {
     }
   };
 
+  // The file is built on the server from the filters the screen is showing, so a client receives
+  // the whole range rather than the one page that happens to be loaded.
+  const exportCsv = async () => {
+    setExporting(true);
+    setError('');
+    setNotice('');
+    try {
+      const params = queryFor(applied, 0);
+      delete params.limit;
+      delete params.offset;
+      const response = await axios.get(`${API_URL}/api/audit/export.csv`, {
+        headers: { Authorization: `Bearer ${token}` },
+        params,
+        responseType: 'text'
+      });
+      downloadCsv(`sitetrackerpro-audit-${todayStamp()}.csv`, response.data);
+      setNotice(response.headers && response.headers['x-export-truncated'] === 'true'
+        ? 'The file holds the newest 20,000 events. Narrow the dates to download the older ones as well.'
+        : 'The audit trail has been downloaded.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not create the download. Check your connection and try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   const apply = (event) => {
     event.preventDefault();
+    setNotice('');
     setApplied({ ...draft });
   };
 
   const clear = () => {
     const empty = { action: '', actor: '', from: '', to: '' };
+    setNotice('');
     setDraft(empty);
     setApplied(empty);
   };
@@ -942,6 +972,9 @@ function AuditScreen({ token }) {
         <div className="page-actions">
           <button type="button" className="btn btn-ghost btn-sm" onClick={() => setApplied({ ...applied })} disabled={loading}>
             Refresh
+          </button>
+          <button type="button" className="btn btn-primary btn-sm" onClick={exportCsv} disabled={exporting || loading}>
+            <Icon name="download" size={12} /> {exporting ? 'Preparing…' : 'Download CSV'}
           </button>
         </div>
       </div>
@@ -991,6 +1024,7 @@ function AuditScreen({ token }) {
       </form>
 
       {error && <p className="helper" style={auditStyles.error}>{error}</p>}
+      {notice && !error && <p className="helper">{notice}</p>}
 
       {loading && <p className="helper">Loading the audit trail…</p>}
 

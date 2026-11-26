@@ -1276,6 +1276,38 @@ app.get('/api/audit', verifyToken, async (req, res) => {
   }
 });
 
+// The same trail as a file, for a client or an auditor who will not be given a login. It takes
+// the filters the screen is showing and returns the whole range in one document rather than a
+// page at a time.
+app.get('/api/audit/export.csv', verifyToken, async (req, res) => {
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({
+      error: 'The audit trail is limited to administrators.',
+      code: 'insufficient_role',
+      role: req.userRole,
+      requiredRole: 'admin'
+    });
+  }
+
+  try {
+    const result = await audit.exportEvents(pool, {
+      action: req.query.action,
+      actor: req.query.actor,
+      projectId: req.query.projectId,
+      from: req.query.from,
+      to: req.query.to
+    });
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + audit.exportFilename() + '"');
+    res.setHeader('Cache-Control', 'no-store');
+    // Read by the screen so it can say when the cap was reached instead of silently cutting the file.
+    res.setHeader('X-Export-Truncated', result.truncated ? 'true' : 'false');
+    res.send(audit.toCsv(result.events));
+  } catch (err) {
+    serverError(res, 'GET /api/audit/export.csv', err);
+  }
+});
+
 // Hosted Site AI. The provider key and prompt stay on the server; the browser
 // calls this authenticated route after the local Site AI cannot answer.
 const aiModule = createAiModule({ app, verifyToken });
