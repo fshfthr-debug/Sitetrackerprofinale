@@ -2857,6 +2857,47 @@ app.get('/api/config', (req, res) => {
   });
 });
 
+// ==================== STORAGE SELF-TEST ====================
+// Swapping the S3 keys was the one deploy step the page could not report on: /health said
+// "driver: s3" whether the keys were accepted or rejected, so the only test was a real upload.
+// This asks the bucket itself. The answer is cached briefly because Render polls /health every
+// half a minute and each check is a request to the storage provider.
+const STORAGE_CHECK_TTL_MS = 60 * 1000;
+const STORAGE_CHECK_TIMEOUT_MS = 5000;
+
+let storageCheckCache = { at: 0, result: null };
+
+async function storageCheck() {
+  const now = Date.now();
+  const checkedAt = new Date(now).toISOString();
+
+  // Nothing remote to test when files live on the uploads volume.
+  if (!storage.isRemote) {
+    return { ok: true, checkedAt, note: 'not used: files are stored on the local uploads volume' };
+  }
+
+  if (storageCheckCache.result && now - storageCheckCache.at < STORAGE_CHECK_TTL_MS) {
+    return storageCheckCache.result;
+  }
+
+  let result;
+  try {
+    const { latencyMs } = await storage.checkAccess({ timeoutMs: STORAGE_CHECK_TIMEOUT_MS });
+    result = { ok: true, checkedAt, latencyMs };
+  } catch (err) {
+    // Only the error's name is logged: keys, endpoints and bucket contents stay out of it.
+    console.error('[' + checkedAt + '] storage self-test failed:', (err && (err.code || err.name)) || 'unknown error');
+    result = {
+      ok: false,
+      checkedAt,
+      reason: describeStorageFailure(err) || 'the bucket could not be reached'
+    };
+  }
+
+  storageCheckCache = { at: now, result };
+  return result;
+}
+
 app.get('/health', async (req, res) => {
   const maptiler = maptilerConfig(process.env);
   // The DWG converter is a separate executable in the image. Probing it here is how an operator
@@ -2882,7 +2923,11 @@ app.get('/health', async (req, res) => {
     storage: {
       driver: storage.driver,
       durable: storage.isRemote,
-      bucket: storage.isRemote ? storage.bucket : null
+      bucket: storage.isRemote ? storage.bucket : null,
+      // ok:false here means the keys were rejected or the bucket is unreachable - uploads will
+      // fail until it is fixed. The app still answers 200: a failing health check makes the
+      // host restart the service over and over, which hides the cause instead of showing it.
+      check: await storageCheck()
     }
   });
 });

@@ -416,3 +416,49 @@ test('a remote GeoTIFF can be materialised for readers that need a real file', a
   await copy.cleanup();
   assert.equal(fs.existsSync(copy.path), false);
 });
+
+// ---------------------------------------------------------------------------
+// The /health self-test: does the bucket accept these keys?
+// ---------------------------------------------------------------------------
+
+test('the storage self-test lists one key and never writes', async () => {
+  const sdk = mockSdk();
+  const storage = createS3Storage({ config: s3Config(), sdk });
+
+  const result = await storage.checkAccess();
+  assert.equal(typeof result.latencyMs, 'number');
+
+  assert.equal(sdk.sent.length, 1);
+  assert.equal(sdk.sent[0].name, 'ListObjectsV2Command');
+  assert.equal(sdk.sent[0].input.Bucket, 'site-files');
+  assert.equal(sdk.sent[0].input.MaxKeys, 1);
+});
+
+test('a rejected key comes back as the sentence naming the variable to fix', async () => {
+  const sdk = mockSdk({
+    onSend: () => {
+      const err = new Error('The request signature we calculated does not match the signature you provided.');
+      err.name = 'SignatureDoesNotMatch';
+      err.$metadata = { httpStatusCode: 403 };
+      throw err;
+    }
+  });
+  const storage = createS3Storage({ config: s3Config(), sdk });
+
+  const failure = await storage.checkAccess().then(() => null, err => err);
+  assert.ok(failure, 'the check must fail rather than report a healthy bucket');
+
+  const reason = describeStorageFailure(failure);
+  assert.match(reason, /S3_SECRET_ACCESS_KEY/);
+  assert.equal(/secret-key|access-key/.test(reason), false);
+});
+
+test('a bucket that never answers is reported as a timeout, not left hanging', async () => {
+  const sdk = mockSdk({ onSend: () => new Promise(() => {}) });
+  const storage = createS3Storage({ config: s3Config(), sdk });
+
+  const failure = await storage.checkAccess({ timeoutMs: 20 }).then(() => null, err => err);
+  assert.ok(failure);
+  assert.equal(failure.code, 'ETIMEDOUT');
+  assert.match(describeStorageFailure(failure), /S3_ENDPOINT/);
+});

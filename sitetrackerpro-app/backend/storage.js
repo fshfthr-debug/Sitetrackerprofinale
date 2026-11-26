@@ -388,6 +388,42 @@ function createS3Storage({ config, sdk, client } = {}) {
       return Number(response.ContentLength);
     },
 
+    /**
+     * Proves the credentials reach the bucket without changing anything: listing a single key is
+     * the cheapest call that both authenticates the signed request and names the bucket. /health
+     * uses it so an operator can tell a working key from a rejected one without a real upload.
+     * Nothing from the listing is returned or logged.
+     */
+    async checkAccess({ timeoutMs = 5000 } = {}) {
+      const startedAt = Date.now();
+      const controller = new AbortController();
+      const request = s3.send(
+        new aws.ListObjectsV2Command({ Bucket: config.bucket, MaxKeys: 1 }),
+        { abortSignal: controller.signal }
+      );
+      // The timeout may win the race below; the request is then abandoned, and its late failure
+      // must not surface as an unhandled rejection.
+      request.catch(() => {});
+
+      let timer;
+      try {
+        const timedOut = new Promise((resolve, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            // A hung endpoint looks like a blank failure; ETIMEDOUT is what
+            // describeStorageFailure turns into "check S3_ENDPOINT".
+            const timeout = new Error('The bucket did not answer in time.');
+            timeout.code = 'ETIMEDOUT';
+            reject(timeout);
+          }, timeoutMs);
+        });
+        await Promise.race([request, timedOut]);
+        return { latencyMs: Date.now() - startedAt };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
     async sha256(key) {
       const stream = await this.createReadStream(key);
       return new Promise((resolve, reject) => {
