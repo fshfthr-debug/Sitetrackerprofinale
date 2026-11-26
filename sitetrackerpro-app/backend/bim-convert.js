@@ -91,16 +91,24 @@ function createBimConvertModule({
     return result.rows[0] || null;
   }
 
+  const isMissingTable = (err) => Boolean(err && err.code === '42P01');
+
   async function conversionRow(projectId, modelId) {
-    const result = await pool.query(
-      'SELECT * FROM bim_model_conversions WHERE model_id = $1 AND project_id = $2',
-      [modelId, projectId]
-    );
-    return result.rows[0] || null;
+    try {
+      const result = await pool.query(
+        'SELECT * FROM bim_model_conversions WHERE model_id = $1 AND project_id = $2',
+        [modelId, projectId]
+      );
+      return result.rows[0] || null;
+    } catch (err) {
+      // The table is created on boot; a request that arrives before it lands simply has no state.
+      if (isMissingTable(err)) return null;
+      throw err;
+    }
   }
 
   async function record(modelId, projectId, fields) {
-    await pool.query(
+    const write = () => pool.query(
       `INSERT INTO bim_model_conversions (model_id, project_id, status, glb_key, bytes, elements, meshes, triangles, error, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
        ON CONFLICT (model_id) DO UPDATE SET
@@ -124,6 +132,14 @@ function createBimConvertModule({
         fields.error || null
       ]
     );
+
+    try {
+      await write();
+    } catch (err) {
+      if (!isMissingTable(err)) throw err;
+      await ensureConversionSchema();
+      await write();
+    }
   }
 
   /** Where the converted GLB lives: beside the source file, so it follows the model's lifetime. */
