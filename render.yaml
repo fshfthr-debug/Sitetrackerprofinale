@@ -59,7 +59,7 @@ services:
       #
       # If the bucket is ever renamed, change it here AND in the dashboard, or uploads fail.
       - key: S3_BUCKET
-        value: sitetrackerpro-files
+        value: sitetrackerprofinale
       # Supabase: Project Settings -> Storage -> S3 connection. Region is the project's.
       - key: S3_REGION
         sync: false
