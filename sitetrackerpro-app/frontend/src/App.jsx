@@ -8,6 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { buildCsv, downloadCsv, safeFilePart, todayStamp } from './csv';
 import { CONTROL_POINT_STATUSES, INITIAL_CONTROL_POINT_STATUSES, parseControlPointText, statusLabel } from './controlPoints';
+import { loadTwinModel, twinModelKind, twinModelUrl } from './bim/twinModel';
 
 const BimViewer = React.lazy(() => import('./BimViewer'));
 
@@ -3752,6 +3753,11 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
   const [selected, setSelected] = useState(null);
   const mountRef = useRef(null);
 
+  // The twin draws the project's linked building model when it has one; the
+  // quantity blocks stay available as their own view.
+  const [twinView, setTwinView] = useState('model');
+  const [twinModel, setTwinModel] = useState({ state: 'idle', message: '', warning: '' });
+
   // DEM terrain layer (optional; the component blocks are unchanged).
   const [terrainSurveys, setTerrainSurveys] = useState([]);
   const [terrainSurveyId, setTerrainSurveyId] = useState('');
@@ -3933,7 +3939,10 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
     const mount = mountRef.current;
     const rows = modelData?.components || [];
     const hasTerrain = Boolean(terrain && terrainVisible);
-    if (!mount || (rows.length === 0 && !hasTerrain)) return undefined;
+    const bimModel = modelData?.bimModel || null;
+    const modelKind = twinModelKind(bimModel?.file_name);
+    const showModel = twinView === 'model' && Boolean(modelKind) && Boolean(bimModel?.id);
+    if (!mount || (rows.length === 0 && !hasTerrain && !showModel)) return undefined;
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf4f1ea);
@@ -3998,6 +4007,8 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
       });
     });
 
+    // In model view the blocks stay in the scene but hidden, so switching back is instant.
+    blocks.visible = !showModel;
     scene.add(blocks);
 
     const span = Math.max(12, phaseNames.length * spacing, Math.max(...phaseNames.map(p => byPhase[p].length)) * spacing);
@@ -4082,22 +4093,68 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
     }
     scene.add(terrainGroup);
 
-    const bounds = new THREE.Box3();
-    if (blocks.children.length > 0) bounds.expandByObject(blocks);
-    if (terrainGroup.children.length > 0) bounds.expandByObject(terrainGroup);
-    if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-5, 0, -5), new THREE.Vector3(5, 8, 5));
-    const centre = bounds.getCenter(new THREE.Vector3());
-    const size = bounds.getSize(new THREE.Vector3());
-    const radius = Math.max(size.x, size.y, size.z, 1);
-
-    camera.position.set(centre.x + radius * 1.15, centre.y + radius * 0.9, centre.z + radius * 1.4);
-    camera.lookAt(centre);
-
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.copy(centre);
     controls.enableDamping = true;
     controls.dampingFactor = 0.09;
     controls.maxPolarAngle = Math.PI / 2.02; // stay above the ground plane
+
+    // Frame what is actually on screen: the building model when it is loaded,
+    // otherwise the blocks and the terrain they sit in.
+    const frame = (modelGroup) => {
+      const bounds = new THREE.Box3();
+      if (modelGroup) {
+        bounds.expandByObject(modelGroup);
+      } else {
+        if (blocks.visible && blocks.children.length > 0) bounds.expandByObject(blocks);
+        if (terrainGroup.children.length > 0) bounds.expandByObject(terrainGroup);
+      }
+      if (bounds.isEmpty()) bounds.set(new THREE.Vector3(-5, 0, -5), new THREE.Vector3(5, 8, 5));
+      const centre = bounds.getCenter(new THREE.Vector3());
+      const size = bounds.getSize(new THREE.Vector3());
+      const radius = Math.max(size.x, size.y, size.z, 1);
+      camera.position.set(centre.x + radius * 1.15, centre.y + radius * 0.9, centre.z + radius * 1.4);
+      camera.lookAt(centre);
+      controls.target.copy(centre);
+      controls.update();
+    };
+    frame(null);
+
+    // The linked building model. Loaded after the scene exists so the blocks
+    // disappear at once, and released in the cleanup (three.js objects are not
+    // garbage-collected on their own).
+    let cancelled = false;
+    let modelRoot = null;
+    let disposeModel = null;
+
+    if (showModel) {
+      setTwinModel({ state: 'loading', message: 'Loading the building model…', warning: '' });
+      loadTwinModel(twinModelUrl(projectId, bimModel.id), {
+        fileName: bimModel.file_name,
+        authHeaders,
+        onStatus: ({ message }) => {
+          if (!cancelled && message) setTwinModel({ state: 'loading', message, warning: '' });
+        }
+      })
+        .then((loaded) => {
+          if (cancelled) { loaded.dispose(); return; }
+          disposeModel = loaded.dispose;
+          modelRoot = loaded.group;
+          scene.add(loaded.group);
+          frame(loaded.group);
+          const size = loaded.sizeMetres;
+          setTwinModel({
+            state: 'ready',
+            message: `${Math.round(size.width)} × ${Math.round(size.depth)} × ${Math.round(size.height)} m · drag to rotate, scroll to zoom`,
+            warning: loaded.warning || ''
+          });
+        })
+        .catch((loadError) => {
+          if (cancelled) return;
+          setTwinModel({ state: 'error', message: loadError.message, warning: '' });
+        });
+    } else {
+      setTwinModel({ state: 'idle', message: '', warning: '' });
+    }
 
     const resize = () => {
       const { clientWidth, clientHeight } = mount;
@@ -4117,6 +4174,7 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     const handleClick = (event) => {
+      if (!blocks.visible) { setSelected(null); return; }
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -4132,6 +4190,11 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
     });
 
     return () => {
+      cancelled = true;
+      if (disposeModel) {
+        if (modelRoot) scene.remove(modelRoot);
+        disposeModel();
+      }
       renderer.setAnimationLoop(null);
       observer.disconnect();
       renderer.domElement.removeEventListener('click', handleClick);
@@ -4146,7 +4209,7 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
       renderer.dispose();
     };
-  }, [modelData, terrainKey]);
+  }, [modelData, terrainKey, twinView, projectId]);
 
   useEffect(() => {
     if (terrainMeshRef.current) terrainMeshRef.current.scale.y = exaggeration;
@@ -4177,13 +4240,17 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
         ? ['Calculate cut and fill', 'Derive earthworks before reviewing the vertical design.']
         : ['Review asset evidence', 'Connect inspections, photos and documents to close the evidence chain.'];
 
+  const bimModel = modelData?.bimModel || null;
+  const modelKind = twinModelKind(bimModel?.file_name);
+  const showModel = twinView === 'model' && Boolean(modelKind) && Boolean(bimModel?.id);
+
   return (
     <div className={embedded ? 'stack' : 'page'}>
       {embedded ? (
         <div className="toolbar-row" style={{ justifyContent: 'space-between' }}>
           <div>
             <div className="panel-eyebrow">Component take-off chart</div>
-            <p className="helper" style={{ marginTop: 3 }}>One block per imported take-off row, sized by quantity and coloured by material.</p>
+            <p className="helper" style={{ marginTop: 3 }}>The linked building model, or one block per imported take-off row when the quantity view is on.</p>
           </div>
           <div className="gis-project">
             <Icon name="cube" size={13} />
@@ -4200,8 +4267,9 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
             <div className="eyebrow">Asset operations / digital twin</div>
             <h1 className="page-title">Digital twin</h1>
             <p className="page-sub">
-              Inspect the model, terrain and asset records as one operational object. Each block is a
-              BIM component; select it to read identity, material and phase.
+              Inspect the model, terrain and asset records as one operational object. A linked IFC, GLB
+              or glTF is drawn as the building itself; the quantity blocks remain a separate view of the
+              imported components.
             </p>
           </div>
           <div className="page-actions">
@@ -4401,7 +4469,7 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
           <h4>Select a project to build its twin</h4>
           <p>The viewer combines imported components, site terrain and the records attached to them.</p>
         </div>
-      ) : components.length === 0 && !loading && (!terrain || !terrainVisible) ? (
+      ) : components.length === 0 && !loading && !showModel && (!terrain || !terrainVisible) ? (
         <div className="empty">
           <div className="empty-icon"><Icon name="box" /></div>
           <h4>No geometry yet</h4>
@@ -4409,17 +4477,50 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
         </div>
       ) : (
         <>
-          {(components.length > 0 || (terrain && terrainVisible)) && (
+          {(components.length > 0 || showModel || (terrain && terrainVisible)) && (
             <div className="twin-grid">
               <div className="twin-stage">
                 <div className="twin-topline">
                   <div className="twin-label"><span className="status-dot" /> Live twin</div>
+                  {modelKind && (
+                    <div className="viewer-modes twin-view-toggle">
+                      <button
+                        type="button"
+                        className={twinView === 'model' ? 'viewer-mode active' : 'viewer-mode'}
+                        onClick={() => { setTwinView('model'); setSelected(null); }}
+                      >
+                        Building model
+                      </button>
+                      <button
+                        type="button"
+                        className={twinView === 'blocks' ? 'viewer-mode active' : 'viewer-mode'}
+                        onClick={() => { setTwinView('blocks'); setSelected(null); }}
+                      >
+                        Quantity blocks
+                      </button>
+                    </div>
+                  )}
                   <div className="twin-label">{components.length} components · {phases.length} phases</div>
                 </div>
                 <div ref={mountRef} className="viewer-surface" />
                 <div className="viewer-badge">
-                  {components.length} blocks · {phases.length} phase{phases.length === 1 ? '' : 's'}{terrain && terrainVisible ? ' · DEM terrain' : ''} · drag to rotate, scroll to zoom
+                  {showModel
+                    ? twinModel.state === 'ready'
+                      ? `${bimModel.file_name} · ${twinModel.message}`
+                      : twinModel.state === 'error'
+                        ? 'Building model not shown'
+                        : (twinModel.message || 'Loading the building model…')
+                    : `${components.length} blocks · ${phases.length} phase${phases.length === 1 ? '' : 's'}${terrain && terrainVisible ? ' · DEM terrain' : ''} · drag to rotate, scroll to zoom`}
                 </div>
+                {showModel && twinModel.state === 'error' && (
+                  <div className="twin-model-note is-error">
+                    <Icon name="alert" size={12} /> {twinModel.message}
+                    <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={() => setTwinView('blocks')}>Show quantity blocks</button>
+                  </div>
+                )}
+                {showModel && twinModel.warning && (
+                  <div className="twin-model-note is-warning"><Icon name="alert" size={12} /> {twinModel.warning}</div>
+                )}
               </div>
 
               <aside className="twin-rail">

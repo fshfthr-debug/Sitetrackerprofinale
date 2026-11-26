@@ -2039,6 +2039,37 @@ code, kbd, samp {
 
 .twin-label .status-dot { background: #65b88e; }
 
+/* Model / quantity-blocks switch, drawn over the dark twin stage. */
+.twin-view-toggle {
+  pointer-events: auto;
+  background: rgba(16, 21, 18, 0.72);
+  border-color: rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+}
+.twin-view-toggle .viewer-mode { color: #b9b2a6; }
+.twin-view-toggle .viewer-mode:hover { color: #f2ede2; }
+.twin-view-toggle .viewer-mode.active { color: #171c19; background: #f2ede2; }
+
+.twin-model-note {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 52px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 9px 11px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  border-radius: 9px;
+  backdrop-filter: blur(8px);
+}
+.twin-model-note.is-error { color: #ffd9d3; background: rgba(94, 30, 22, 0.9); border: 1px solid rgba(255, 160, 145, 0.35); }
+.twin-model-note.is-warning { color: #ffe6c2; background: rgba(88, 55, 12, 0.9); border: 1px solid rgba(255, 196, 120, 0.35); }
+.twin-model-note .btn { margin-left: auto; }
+
 .twin-rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 
 .health-card { padding: 15px; }
