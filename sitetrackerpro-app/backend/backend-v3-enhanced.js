@@ -661,6 +661,10 @@ const { maptilerConfig } = require('./maptiler');
 const dwgConverter = require('./dwg');
 const terrainModule = createTerrainModule({ app, pool, verifyToken, requireProjectAccess, uploadDir: UPLOAD_DIR, storage });
 
+// Large IFC -> GLB conversion for the Digital Twin (worker thread, cached in storage).
+const createBimConvertModule = require('./bim-convert');
+const bimConvertModule = createBimConvertModule({ app, pool, verifyToken, requireProjectAccess, storage, serverError });
+
 // GIS workspaces and layers (saved map state and layer stacks).
 const createGisWorkspaceModule = require('./gis-workspaces');
 const gisWorkspaceModule = createGisWorkspaceModule({ app, pool, verifyToken, requireProjectAccess });
@@ -2399,8 +2403,23 @@ app.get('/api/3d/model/:projectId', verifyToken, requireProjectAccess(req => req
     
     const earthworks = earthResult.rows[0];
 
+    // The viewer needs the model's size before it downloads anything: an IFC above the browser
+    // limit is converted on the server instead of being fetched only to be refused.
+    const bimModel = bimResult.rows[0] || null;
+    let modelSizeBytes = null;
+    if (bimModel && bimModel.file_path) {
+      const stored = String(bimModel.file_path);
+      try {
+        modelSizeBytes = path.isAbsolute(stored)
+          ? (await fs.promises.stat(stored)).size
+          : await storage.size(stored);
+      } catch (err) {
+        modelSizeBytes = null;
+      }
+    }
+
     res.json({
-      bimModel: bimResult.rows[0] || null,
+      bimModel: bimModel ? { ...bimModel, sizeBytes: modelSizeBytes } : null,
       components: qtyResult.rows.map(row => ({ ...row, quantity: toNum(row.quantity) })),
       // DECIMAL columns arrive as strings; cast them so the viewer can format them.
       earthworks: earthworks
@@ -3188,6 +3207,10 @@ app.listen(PORT, () => {
   gisWorkspaceModule.ensureGisWorkspaceSchema()
     .then(() => console.log('✅ GIS workspaces ready (saved map state and layers)'))
     .catch(err => console.error('⚠️ Could not prepare the GIS workspace tables:', err.message));
+
+  bimConvertModule.ensureConversionSchema()
+    .then(() => console.log('✅ IFC conversion table ready (large models for the Digital Twin)'))
+    .catch(err => console.error('⚠️ Could not prepare the IFC conversion table:', err.message));
 });
 
 module.exports = app;

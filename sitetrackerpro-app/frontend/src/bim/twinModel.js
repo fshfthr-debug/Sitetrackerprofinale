@@ -14,7 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import * as THREE from 'three';
-import { loadIfcModel } from '../gis/ifcModel.js';
+import { IFC_BROWSER_LIMIT_BYTES, loadIfcModel } from '../gis/ifcModel.js';
 import { isGltfFileName, GLB_BROWSER_LIMIT_BYTES, tooLargeMessage } from './gltfFile.js';
 import { gltfTextureWarning, parseGltfBuffer } from './gltfLoader.js';
 
@@ -33,6 +33,92 @@ export function twinModelKind(fileName) {
 /** The authenticated URL that serves the stored model file. */
 export function twinModelUrl(projectId, modelId) {
   return `${process.env.REACT_APP_API_URL || ''}/api/gis/georeferencing/${projectId}/model/${modelId}/file`;
+}
+
+const API_URL = process.env.REACT_APP_API_URL || '';
+
+/** Where the server converts a large IFC to a GLB (POST starts it, GET reads its state). */
+export function twinConvertUrl(projectId, modelId) {
+  return `${API_URL}/api/bim/${projectId}/models/${modelId}/convert`;
+}
+
+/** The converted GLB itself. */
+export function twinGlbUrl(projectId, modelId) {
+  return `${API_URL}/api/bim/${projectId}/models/${modelId}/glb`;
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ask the server to convert a model, then wait for it. Resolves when a GLB is ready.
+ * Conversion happens once per model and is cached, so a second visit skips this entirely.
+ */
+export async function ensureTwinModelConverted(projectId, modelId, authHeaders, onStatus) {
+  const status = (message) => { if (onStatus) onStatus({ state: 'converting', message }); };
+  const headers = authHeaders || {};
+
+  status('Sending the model to the server to be converted…');
+  const started = await fetch(twinConvertUrl(projectId, modelId), { method: 'POST', headers });
+  let payload = await started.json().catch(() => ({}));
+
+  if (started.status === 413) {
+    throw new Error(payload.error || 'This model is too large for the server to convert.');
+  }
+  if (!started.ok && started.status !== 202) {
+    throw new Error(payload.error || `The server could not start the conversion (HTTP ${started.status}).`);
+  }
+  if (payload.status === 'ready') return;
+
+  // Long enough for a large model on a small instance; the server keeps working if the tab gives up.
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (payload.status === 'ready') return;
+    if (payload.status === 'failed') {
+      throw new Error(payload.error || 'The server could not convert this model.');
+    }
+
+    status(payload.status === 'queued'
+      ? 'Waiting for another model to finish converting…'
+      : 'Converting the model on the server — this happens once, and the first view can take a minute…');
+
+    await sleep(3000);
+    const response = await fetch(twinConvertUrl(projectId, modelId), { headers });
+    payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(payload.error || `The conversion status could not be read (HTTP ${response.status}).`);
+    }
+  }
+
+  throw new Error('The server is still converting this model. Reload the twin in a minute and it should be ready.');
+}
+
+/**
+ * Load a model for the twin, falling back to server-side conversion when an IFC is above the
+ * size a browser can read. Everything else behaves exactly like loadTwinModel.
+ */
+export async function loadTwinModelWithConversion(url, { projectId, modelId, fileName, sizeBytes, authHeaders, wasmPath, onStatus } = {}) {
+  const isIfc = twinModelKind(fileName) === 'ifc';
+  const knownTooLarge = isIfc && Number(sizeBytes) > IFC_BROWSER_LIMIT_BYTES;
+
+  try {
+    // A model known to be over the browser limit is not downloaded just to be refused.
+    if (knownTooLarge && projectId && modelId) throw Object.assign(new Error('', { code: 'IFC_TOO_LARGE' }));
+    return await loadTwinModel(url, { fileName, authHeaders, wasmPath, onStatus });
+  } catch (err) {
+    if (!err || err.code !== 'IFC_TOO_LARGE' || !projectId || !modelId) throw err;
+
+    await ensureTwinModelConverted(projectId, modelId, authHeaders, onStatus);
+    if (onStatus) onStatus({ state: 'converting', message: 'Loading the converted model…' });
+
+    const loaded = await loadTwinModel(twinGlbUrl(projectId, modelId), {
+      fileName: `${String(fileName || 'model').replace(/\.ifc$/i, '')}.glb`,
+      authHeaders,
+      wasmPath,
+      onStatus
+    });
+    loaded.converted = true;
+    return loaded;
+  }
 }
 
 export function unsupportedTwinModelMessage(fileName) {

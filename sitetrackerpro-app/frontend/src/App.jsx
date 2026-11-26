@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { buildCsv, downloadCsv, safeFilePart, todayStamp } from './csv';
 import { CONTROL_POINT_STATUSES, INITIAL_CONTROL_POINT_STATUSES, parseControlPointText, statusLabel } from './controlPoints';
-import { loadTwinModel, twinModelKind, twinModelUrl } from './bim/twinModel';
+import { loadTwinModelWithConversion, twinModelKind, twinModelUrl } from './bim/twinModel';
 
 const BimViewer = React.lazy(() => import('./BimViewer'));
 
@@ -4128,11 +4128,15 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
 
     if (showModel) {
       setTwinModel({ state: 'loading', message: 'Loading the building model…', warning: '' });
-      loadTwinModel(twinModelUrl(projectId, bimModel.id), {
+      // A model over the browser's IFC limit is converted once on the server, then cached.
+      loadTwinModelWithConversion(twinModelUrl(projectId, bimModel.id), {
+        projectId,
+        modelId: bimModel.id,
         fileName: bimModel.file_name,
+        sizeBytes: bimModel.sizeBytes,
         authHeaders,
-        onStatus: ({ message }) => {
-          if (!cancelled && message) setTwinModel({ state: 'loading', message, warning: '' });
+        onStatus: ({ state, message }) => {
+          if (!cancelled && message) setTwinModel({ state: state === 'converting' ? 'converting' : 'loading', message, warning: '' });
         }
       })
         .then((loaded) => {
@@ -4512,6 +4516,9 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
                         : (twinModel.message || 'Loading the building model…')
                     : `${components.length} blocks · ${phases.length} phase${phases.length === 1 ? '' : 's'}${terrain && terrainVisible ? ' · DEM terrain' : ''} · drag to rotate, scroll to zoom`}
                 </div>
+                {showModel && twinModel.state === 'converting' && (
+                  <div className="twin-model-note is-warning"><Icon name="refresh" size={12} /> {twinModel.message}</div>
+                )}
                 {showModel && twinModel.state === 'error' && (
                   <div className="twin-model-note is-error">
                     <Icon name="alert" size={12} /> {twinModel.message}

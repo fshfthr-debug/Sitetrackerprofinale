@@ -21,9 +21,9 @@ export const megabytes = (bytes) => (bytes === null || bytes === undefined
   : `${(bytes / (1024 * 1024)).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} MB`);
 
 export function largeIfcMessage(sizeBytes) {
-  return `This IFC is ${megabytes(sizeBytes)}, over the 25 MB the browser can read directly. `
-    + 'Large models need the server-side conversion stage, which is not built yet — '
-    + 'export a GLB from your BIM tool and import that in the meantime.';
+  return `This IFC is ${megabytes(sizeBytes)}, over the 25 MB a browser can read directly. `
+    + 'The Digital Twin converts large models on the server; the map and other views need a GLB '
+    + 'export (up to 100 MB) or a smaller IFC.';
 }
 
 // web-ifc's WebAssembly module is expensive to compile, so one API instance is shared by every
@@ -60,7 +60,13 @@ export async function loadIfcModel(url, { authHeaders, wasmPath, onStatus } = {}
   }
   const buffer = await response.arrayBuffer();
   if (buffer.byteLength === 0) throw new Error('The stored IFC file is empty.');
-  if (buffer.byteLength > IFC_BROWSER_LIMIT_BYTES) throw new Error(largeIfcMessage(buffer.byteLength));
+  if (buffer.byteLength > IFC_BROWSER_LIMIT_BYTES) {
+    // Named, so the Digital Twin can offer the server-side conversion instead of only an error.
+    const tooLarge = new Error(largeIfcMessage(buffer.byteLength));
+    tooLarge.code = 'IFC_TOO_LARGE';
+    tooLarge.sizeBytes = buffer.byteLength;
+    throw tooLarge;
+  }
 
   status('loading', `Reading the IFC in the browser (${megabytes(buffer.byteLength)})…`);
   // web-ifc looks for `${path}web-ifc.wasm`; the build copies it to the site root (see
