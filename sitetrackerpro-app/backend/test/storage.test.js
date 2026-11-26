@@ -453,6 +453,66 @@ test('a rejected key comes back as the sentence naming the variable to fix', asy
   assert.equal(/secret-key|access-key/.test(reason), false);
 });
 
+test('the write probe stores one small object and removes it again', async () => {
+  const sdk = mockSdk();
+  const storage = createS3Storage({ config: s3Config(), sdk });
+
+  const result = await storage.checkWrite();
+  assert.equal(typeof result.latencyMs, 'number');
+  assert.equal(result.removed, true);
+
+  assert.deepEqual(sdk.sent.map(command => command.name), ['PutObjectCommand', 'DeleteObjectCommand']);
+  assert.equal(sdk.sent[0].input.Bucket, 'site-files');
+  assert.equal(sdk.sent[0].input.Key, '_health/write-check.txt');
+  assert.equal(sdk.sent[0].input.ContentLength, sdk.sent[0].input.Body.length);
+  assert.equal(sdk.sent[1].input.Key, '_health/write-check.txt');
+});
+
+test('the write probe stays inside the configured prefix', async () => {
+  const sdk = mockSdk();
+  const storage = createS3Storage({ config: s3Config({ S3_PREFIX: 'uploads' }), sdk });
+
+  await storage.checkWrite();
+  assert.equal(sdk.sent[0].input.Key, 'uploads/_health/write-check.txt');
+});
+
+test('a key that can read but not write fails the probe with the bucket-policy sentence', async () => {
+  const sdk = mockSdk({
+    onSend: command => {
+      if (command.name === 'PutObjectCommand') {
+        const err = new Error('Access Denied');
+        err.name = 'AccessDenied';
+        err.$metadata = { httpStatusCode: 403 };
+        throw err;
+      }
+      return {};
+    }
+  });
+  const storage = createS3Storage({ config: s3Config(), sdk });
+
+  const failure = await storage.checkWrite().then(() => null, err => err);
+  assert.ok(failure, 'the probe must fail rather than report a writable bucket');
+  assert.match(describeStorageFailure(failure), /bucket policy/);
+});
+
+test('a probe that cannot be removed still leaves the bucket usable for uploads', async () => {
+  const sdk = mockSdk({
+    onSend: command => {
+      if (command.name === 'DeleteObjectCommand') {
+        const err = new Error('Access Denied');
+        err.name = 'AccessDenied';
+        err.$metadata = { httpStatusCode: 403 };
+        throw err;
+      }
+      return {};
+    }
+  });
+  const storage = createS3Storage({ config: s3Config(), sdk });
+
+  const result = await storage.checkWrite();
+  assert.equal(result.removed, false);
+});
+
 test('a bucket that never answers is reported as a timeout, not left hanging', async () => {
   const sdk = mockSdk({ onSend: () => new Promise(() => {}) });
   const storage = createS3Storage({ config: s3Config(), sdk });

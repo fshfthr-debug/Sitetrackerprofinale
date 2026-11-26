@@ -337,6 +337,28 @@ function createS3Storage({ config, sdk, client } = {}) {
 
   const send = command => s3.send(command);
 
+  /**
+   * Sends one command with a deadline. A hung endpoint must fail with ETIMEDOUT (so
+   * describeStorageFailure can name S3_ENDPOINT), and the abandoned request must not
+   * surface later as an unhandled rejection.
+   */
+  function sendWithin(command, timeoutMs) {
+    const controller = new AbortController();
+    const request = s3.send(command, { abortSignal: controller.signal });
+    request.catch(() => {});
+
+    let timer;
+    const timedOut = new Promise((resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        const timeout = new Error('The bucket did not answer in time.');
+        timeout.code = 'ETIMEDOUT';
+        reject(timeout);
+      }, timeoutMs);
+    });
+    return Promise.race([request, timedOut]).finally(() => clearTimeout(timer));
+  }
+
   return {
     driver: 's3',
     isRemote: true,
@@ -396,32 +418,38 @@ function createS3Storage({ config, sdk, client } = {}) {
      */
     async checkAccess({ timeoutMs = 5000 } = {}) {
       const startedAt = Date.now();
-      const controller = new AbortController();
-      const request = s3.send(
-        new aws.ListObjectsV2Command({ Bucket: config.bucket, MaxKeys: 1 }),
-        { abortSignal: controller.signal }
-      );
-      // The timeout may win the race below; the request is then abandoned, and its late failure
-      // must not surface as an unhandled rejection.
-      request.catch(() => {});
+      await sendWithin(new aws.ListObjectsV2Command({ Bucket: config.bucket, MaxKeys: 1 }), timeoutMs);
+      return { latencyMs: Date.now() - startedAt };
+    },
 
-      let timer;
+    /**
+     * Proves the credentials can actually store an object, which is what an upload needs and a
+     * listing does not test: a read-only key lists the bucket happily and then fails the first
+     * BIM upload. The probe writes one small fixed object and deletes it again, so it never
+     * leaves anything behind and cannot fill the bucket.
+     */
+    async checkWrite({ timeoutMs = 5000 } = {}) {
+      const startedAt = Date.now();
+      const key = [config.prefix, '_health', 'write-check.txt'].filter(Boolean).join('/');
+      const body = Buffer.from('sitetrackerpro storage write check');
+
+      await sendWithin(new aws.PutObjectCommand({
+        Bucket: config.bucket,
+        Key: key,
+        Body: body,
+        ContentLength: body.length,
+        ContentType: 'text/plain'
+      }), timeoutMs);
+
+      // A probe that could be stored but not removed is still a working bucket for uploads;
+      // the leftover object is tiny and the same key is overwritten next time.
+      let removed = true;
       try {
-        const timedOut = new Promise((resolve, reject) => {
-          timer = setTimeout(() => {
-            controller.abort();
-            // A hung endpoint looks like a blank failure; ETIMEDOUT is what
-            // describeStorageFailure turns into "check S3_ENDPOINT".
-            const timeout = new Error('The bucket did not answer in time.');
-            timeout.code = 'ETIMEDOUT';
-            reject(timeout);
-          }, timeoutMs);
-        });
-        await Promise.race([request, timedOut]);
-        return { latencyMs: Date.now() - startedAt };
-      } finally {
-        clearTimeout(timer);
+        await sendWithin(new aws.DeleteObjectCommand({ Bucket: config.bucket, Key: key }), timeoutMs);
+      } catch (err) {
+        removed = false;
       }
+      return { latencyMs: Date.now() - startedAt, removed };
     },
 
     async sha256(key) {

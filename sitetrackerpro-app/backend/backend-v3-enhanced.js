@@ -2867,6 +2867,37 @@ const STORAGE_CHECK_TIMEOUT_MS = 5000;
 
 let storageCheckCache = { at: 0, result: null };
 
+// A listing proves the keys are accepted, not that an upload can be stored: a read-only key
+// lists the bucket and then fails the first BIM upload. The write probe is part of the same
+// answer, but it writes, so it runs once per process after it succeeds and is retried every
+// few minutes while it fails (a bucket policy can be fixed without a redeploy).
+let storageWriteCache = { at: 0, result: null };
+const STORAGE_WRITE_RETRY_MS = 5 * 60 * 1000;
+
+async function storageWriteCheck(now) {
+  if (typeof storage.checkWrite !== 'function') return null;
+
+  const cached = storageWriteCache.result;
+  if (cached && (cached.ok || now - storageWriteCache.at < STORAGE_WRITE_RETRY_MS)) return cached;
+
+  const checkedAt = new Date(now).toISOString();
+  try {
+    const { latencyMs } = await storage.checkWrite({ timeoutMs: STORAGE_CHECK_TIMEOUT_MS });
+    storageWriteCache = { at: now, result: { ok: true, checkedAt, latencyMs } };
+  } catch (err) {
+    console.error('[' + checkedAt + '] storage write check failed:', (err && (err.code || err.name)) || 'unknown error');
+    storageWriteCache = {
+      at: now,
+      result: {
+        ok: false,
+        checkedAt,
+        reason: describeStorageFailure(err) || 'a test file could not be written to the bucket'
+      }
+    };
+  }
+  return storageWriteCache.result;
+}
+
 async function storageCheck() {
   const now = Date.now();
   const checkedAt = new Date(now).toISOString();
@@ -2883,7 +2914,12 @@ async function storageCheck() {
   let result;
   try {
     const { latencyMs } = await storage.checkAccess({ timeoutMs: STORAGE_CHECK_TIMEOUT_MS });
-    result = { ok: true, checkedAt, latencyMs };
+    const write = await storageWriteCheck(now);
+    if (write && !write.ok) {
+      result = { ok: false, checkedAt, latencyMs, reason: write.reason, write };
+    } else {
+      result = { ok: true, checkedAt, latencyMs, write };
+    }
   } catch (err) {
     // Only the error's name is logged: keys, endpoints and bucket contents stay out of it.
     console.error('[' + checkedAt + '] storage self-test failed:', (err && (err.code || err.name)) || 'unknown error');
