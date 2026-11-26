@@ -518,7 +518,9 @@ export default function Georeferencing({
               <div style={styles.warning}>{placement.model.mapSupport.reason}</div>
             )}
             {model3d && model3dStatus.message && (
-              <div style={model3dStatus.state === 'error' ? styles.error : model3dStatus.state === 'ready' ? styles.success : styles.helper}>
+              <div style={model3dStatus.state === 'error' ? styles.error
+                : model3dStatus.state === 'warning' ? styles.warning
+                  : model3dStatus.state === 'ready' ? styles.success : styles.helper}>
                 {model3dStatus.message}
               </div>
             )}

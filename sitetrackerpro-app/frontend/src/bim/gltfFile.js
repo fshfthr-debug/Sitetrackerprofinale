@@ -34,6 +34,8 @@ export function isGltfFileName(fileName) {
   return /\.(glb|gltf)$/i.test(String(fileName || ''));
 }
 
+export const KTX2_TEXTURE_EXTENSION = 'KHR_texture_basisu';
+
 export function tooLargeMessage(fileName, sizeBytes, limitBytes = GLB_BROWSER_LIMIT_BYTES) {
   const name = String(fileName || 'This model');
   // Rounded up, so a file one byte over the limit does not read as "100 MB, over 100 MB".
@@ -101,6 +103,74 @@ export function readGltfJson(arrayBuffer) {
   return null;
 }
 
+/**
+ * What a glTF expects from its textures. Read from the JSON header, before three.js
+ * builds materials, so a texture problem can be explained rather than left as a
+ * grey model.
+ */
+export function textureSummary(json) {
+  const images = (json && Array.isArray(json.images)) ? json.images : [];
+  const textures = (json && Array.isArray(json.textures)) ? json.textures : [];
+  const required = (json && Array.isArray(json.extensionsRequired)) ? json.extensionsRequired : [];
+  const used = (json && Array.isArray(json.extensionsUsed)) ? json.extensionsUsed : [];
+  return {
+    imageCount: images.length,
+    textureCount: textures.length,
+    // Required: three.js refuses to parse the file at all without a KTX2 decoder.
+    ktx2Required: required.includes(KTX2_TEXTURE_EXTENSION),
+    ktx2: required.includes(KTX2_TEXTURE_EXTENSION) || used.includes(KTX2_TEXTURE_EXTENSION),
+    // Images stored beside the model rather than inside it. A .glb opened on its own
+    // cannot reach them, which is one of the common ways a model arrives grey.
+    externalImages: images
+      .filter((image) => typeof image.uri === 'string' && !/^data:/i.test(image.uri))
+      .map((image) => image.uri)
+  };
+}
+
+export function ktx2TextureMessage(fileName) {
+  const name = String(fileName || 'This model');
+  return `${name} uses KTX2/Basis-compressed textures. The viewer has no KTX2 decoder, so those `
+    + 'textures cannot be shown and the model appears in flat grey. Re-export with ordinary '
+    + 'PNG or JPEG textures: in the Blender glTF 2.0 exporter switch texture compression off (Draco '
+    + 'geometry compression is fine), and on Sketchfab download the glTF version with PNG textures.';
+}
+
+export function missingTexturesMessage(fileName, failed, total, externalImages = []) {
+  const name = String(fileName || 'This model');
+  const count = `${failed} ${failed === 1 ? 'texture' : 'textures'} of ${total}`;
+  const files = externalImages.slice(0, 4).map((uri) => `“${uri}”`).join(', ');
+  const more = externalImages.length > 4 ? ` and ${externalImages.length - 4} more` : '';
+  const cause = files
+    ? `The file points at texture images that are not inside it: ${files}${more}. Copy them next to the `
+      + 'model and open the .gltf from that folder, or export with the textures embedded '
+      + '(Blender: glTF Binary with Images set to Automatic).'
+    : 'The texture data inside the file could not be decoded. Export the model again as glTF 2.0 '
+      + 'with PNG or JPEG textures embedded.';
+  return `${name} opened, but ${count} could not be loaded, so those surfaces are plain grey. ${cause}`;
+}
+
+/**
+ * The texture warning for a parsed model, or null when its textures all loaded.
+ * `textures` holds what three.js resolved for each texture it tried to read: a
+ * texture, or null where the image failed (three.js swallows that error and
+ * leaves the material without a map).
+ */
+export function textureWarningFor(json, textures, fileName) {
+  const summary = textureSummary(json);
+  if (summary.ktx2) return ktx2TextureMessage(fileName);
+  const list = Array.isArray(textures) ? textures : [];
+  const failed = list.filter((texture) => !texture).length;
+  if (failed > 0) {
+    return missingTexturesMessage(fileName, failed, list.length, summary.externalImages);
+  }
+  // Nothing was even attempted, yet the file declares textures: they were never used
+  // by a material, which also leaves the model flat.
+  if (summary.imageCount > 0 && summary.textureCount > 0 && list.length === 0) {
+    return missingTexturesMessage(fileName, summary.textureCount, summary.textureCount, summary.externalImages);
+  }
+  return null;
+}
+
 function notAGlbMessage(arrayBuffer) {
   const head = new Uint8Array(arrayBuffer, 0, Math.min(arrayBuffer.byteLength, 16));
   const ascii = Array.from(head).map((byte) => (byte >= 32 && byte < 127 ? String.fromCharCode(byte) : '.')).join('');
@@ -152,6 +222,10 @@ export function assertLoadableGltf(arrayBuffer, fileName) {
     throw new Error(`${name} has no readable glTF JSON header, so its contents cannot be loaded. `
       + 'Export it again as glTF 2.0 (.glb).');
   }
+
+  // three.js refuses a file whose required KTX2 textures cannot be decoded; say why here
+  // rather than let its internal "setKTX2Loader must be called" message be the answer.
+  if (textureSummary(json).ktx2Required) throw new Error(ktx2TextureMessage(name));
 
   const version = json.asset && json.asset.version;
   if (!version) {

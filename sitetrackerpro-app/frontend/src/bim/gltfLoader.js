@@ -15,7 +15,7 @@
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
-import { assertLoadableGltf } from './gltfFile';
+import { assertLoadableGltf, textureWarningFor } from './gltfFile';
 
 export const DRACO_DECODER_PATH = `${process.env.PUBLIC_URL || ''}/draco/`;
 
@@ -55,4 +55,19 @@ export async function parseGltfBuffer(arrayBuffer, fileName) {
   assertLoadableGltf(arrayBuffer, fileName);
   const loader = await gltfLoader();
   return loader.parseAsync(arrayBuffer, DRACO_DECODER_PATH);
+}
+
+/**
+ * Why a parsed model may be grey, or null when its textures came through.
+ *
+ * three.js turns a failed image load into a material with no map and only logs it,
+ * so the model otherwise opens blank with no explanation. `textureCache` keeps one
+ * entry per texture it tried to read; the resolved value is null where that failed.
+ */
+export async function gltfTextureWarning(gltf, fileName) {
+  const parser = gltf && gltf.parser;
+  if (!parser || !parser.json) return null;
+  const cache = parser.textureCache || {};
+  const textures = await Promise.all(Object.values(cache));
+  return textureWarningFor(parser.json, textures, fileName);
 }

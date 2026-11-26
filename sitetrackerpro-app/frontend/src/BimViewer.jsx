@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { colourForType, geometryFromPlacedGeometry } from './bim/ifcGeometry';
 import { GLB_BROWSER_LIMIT_BYTES, isGltfFileName, tooLargeMessage } from './bim/gltfFile';
-import { parseGltfBuffer } from './bim/gltfLoader';
+import { gltfTextureWarning, parseGltfBuffer } from './bim/gltfLoader';
 
 // ---------------------------------------------------------------------------
 // BIM viewer built on three.js (MIT) + web-ifc (MPL-2.0).
@@ -52,7 +52,8 @@ const styles = {
   dt: { color: '#63748a' },
   dd: { margin: 0, overflowWrap: 'break-word' },
   measure: { display: 'flex', justifyContent: 'space-between', fontSize: '12px', padding: '3px 0', borderBottom: '1px solid #f2f5f8' },
-  error: { margin: '10px 14px', padding: '10px', borderRadius: '8px', background: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '10px', lineHeight: 1.5 }
+  error: { margin: '10px 14px', padding: '10px', borderRadius: '8px', background: 'var(--danger-soft)', color: 'var(--danger)', fontSize: '10px', lineHeight: 1.5 },
+  warning: { margin: '10px 14px', padding: '10px', borderRadius: '8px', background: 'rgba(240,140,0,0.12)', color: '#8a4b08', fontSize: '10px', lineHeight: 1.5 }
 };
 
 const refId = (value) => {
@@ -113,6 +114,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
   const [status, setStatus] = useState('Open an IFC, GLB or glTF file to view the model');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [warning, setWarning] = useState('');
   const [summary, setSummary] = useState(null);
   const [storeys, setStoreys] = useState([]);
   const [types, setTypes] = useState([]);
@@ -485,6 +487,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
     if (!engine) return;
     setBusy(true);
     setError('');
+    setWarning('');
     setStatus('Reading IFC…');
     try {
       const { IfcAPI } = await import('web-ifc');
@@ -723,6 +726,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
     if (!engine) return;
     setBusy(true);
     setError('');
+    setWarning('');
     setStatus('Reading glTF…');
     try {
       // Draco and Meshopt decompression are attached by the shared loader, so a
@@ -778,6 +782,8 @@ export default function BimViewer({ token, projects = [], projectId }) {
         source: 'gltf'
       });
       setTakeoff([]);
+      // A model whose textures failed is not a failed model: it opens, grey. Say why.
+      setWarning((await gltfTextureWarning(gltf, fileName)) || '');
       setStatus(`${meshes.length} meshes · glTF (no BIM metadata)`);
     } catch (loadError) {
       setError(`Could not read ${fileName}: ${loadError.message}`);
@@ -801,6 +807,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
       return;
     }
     setError('');
+    setWarning('');
     // Refuse an oversized model before reading it, not after the tab has spent
     // a minute loading it into memory.
     if (isGltf && file.size > GLB_BROWSER_LIMIT_BYTES) {
@@ -1012,6 +1019,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
       </div>
 
       {error && <div style={styles.error}>{error}</div>}
+      {warning && <div style={styles.warning}>{warning}</div>}
 
       <div className="bim-body" style={styles.body}>
         <div className="bim-side" style={styles.side}>

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildModelMatrix } from './placementMath.js';
 import { loadIfcModel, IFC_BROWSER_LIMIT_BYTES, largeIfcMessage } from './ifcModel.js';
-import { parseGltfBuffer } from '../bim/gltfLoader.js';
+import { gltfTextureWarning, parseGltfBuffer } from '../bim/gltfLoader.js';
 import { GLB_BROWSER_LIMIT_BYTES, tooLargeMessage } from '../bim/gltfFile.js';
 
 /**
@@ -93,6 +93,7 @@ async function loadModelGeometry(placement, { url, authHeaders, wasmPath, onStat
   // Shared loader: Draco and Meshopt compressed GLBs are decompressed here, and
   // a legacy glTF 1.0 or mislabelled file is reported by name, not as "failed".
   const gltf = await parseGltfBuffer(buffer, placement.model.fileName || 'model.glb');
+  const textureWarning = await gltfTextureWarning(gltf, placement.model.fileName || 'model.glb');
 
   // glTF is Y-up; the layer works in (east, north, up). Geometry is left where the file puts it:
   // the saved transform says the anchor is the *model origin*, so shifting the geometry to its
@@ -114,6 +115,7 @@ async function loadModelGeometry(placement, { url, authHeaders, wasmPath, onStat
   return {
     group: oriented,
     format: 'gltf',
+    textureWarning,
     sizeMetres,
     bounds: box,
     bytes: buffer.byteLength,
@@ -222,8 +224,12 @@ export async function attachGeoreferencedModel(map, { placement, url, authHeader
   };
 
   if (model.format !== 'ifc') {
-    status('ready', `${placement.model.fileName || 'Model'} placed at its anchor — `
-      + `${model.sizeMetres.width} × ${model.sizeMetres.depth} × ${model.sizeMetres.height} m.`);
+    const placed = `${placement.model.fileName || 'Model'} placed at its anchor — `
+      + `${model.sizeMetres.width} × ${model.sizeMetres.depth} × ${model.sizeMetres.height} m.`;
+    // Placed, but grey: the texture reason belongs beside the result, not in a
+    // browser console the user never opens.
+    if (model.textureWarning) status('warning', `${placed} ${model.textureWarning}`);
+    else status('ready', placed);
   }
 
   return {
@@ -231,6 +237,7 @@ export async function attachGeoreferencedModel(map, { placement, url, authHeader
     sizeMetres: model.sizeMetres,
     layerId: MODEL_LAYER_ID,
     format: model.format,
+    textureWarning: model.textureWarning || null,
     elements: model.elements || null,
     meshes: model.meshes || null,
     storeys: model.storeys || null,
