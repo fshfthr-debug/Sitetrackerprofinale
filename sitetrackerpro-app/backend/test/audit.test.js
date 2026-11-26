@@ -238,3 +238,60 @@ test('a broken offset falls back to the first page, and the last page says so', 
   assert.equal(page.events[0].detail, null);
   assert.equal(page.events[0].actorId, null);
 });
+
+// ======================= RETENTION =======================
+// The trail is append-only apart from the daily purge. These tests pin the window, the batch
+// walk and the opt-out, because a mistake here deletes a client's history for good.
+
+function purgeDb({ batches = [], fail = null } = {}) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params = []) {
+      calls.push({ sql: sql.replace(/\s+/g, ' ').trim(), params });
+      if (fail) throw fail;
+      return { rows: [], rowCount: batches.length ? batches.shift() : 0 };
+    }
+  };
+}
+
+test('the retention window defaults to two years, is floored, and 0 turns it off', () => {
+  assert.equal(audit.retentionDays({}), audit.DEFAULT_RETENTION_DAYS);
+  assert.equal(audit.retentionDays({ AUDIT_RETENTION_DAYS: '365' }), 365);
+  assert.equal(audit.retentionDays({ AUDIT_RETENTION_DAYS: '0' }), 0);
+  assert.equal(audit.retentionDays({ AUDIT_RETENTION_DAYS: '' }), audit.DEFAULT_RETENTION_DAYS);
+  assert.equal(audit.retentionDays({ AUDIT_RETENTION_DAYS: 'nonsense' }), audit.DEFAULT_RETENTION_DAYS);
+  assert.equal(audit.retentionDays({ AUDIT_RETENTION_DAYS: '-5' }), audit.DEFAULT_RETENTION_DAYS);
+  // A window of a few days would let a typo erase this month's work.
+  assert.equal(audit.retentionDays({ AUDIT_RETENTION_DAYS: '3' }), audit.MIN_RETENTION_DAYS);
+});
+
+test('expired entries are deleted in batches, and only those older than the window', async () => {
+  const db = purgeDb({ batches: [audit.PURGE_BATCH_SIZE, 120] });
+  const now = new Date('2026-11-26T00:00:00.000Z');
+  const result = await audit.purgeExpired(db, { days: 730, now });
+
+  assert.equal(result.deleted, audit.PURGE_BATCH_SIZE + 120);
+  assert.equal(result.cutoff.toISOString(), '2024-11-26T00:00:00.000Z');
+  assert.equal(db.calls.length, 2, 'a short batch ends the walk');
+  for (const call of db.calls) {
+    assert.match(call.sql, /^DELETE FROM audit_events/);
+    assert.match(call.sql, /WHERE created_at < \$1/);
+    assert.match(call.sql, /LIMIT \$2/);
+    assert.deepEqual(call.params, [result.cutoff, audit.PURGE_BATCH_SIZE]);
+  }
+});
+
+test('retention off keeps the trail and touches no rows', async () => {
+  const db = purgeDb();
+  const result = await audit.purgeExpired(db, { days: 0 });
+  assert.deepEqual(result, { deleted: 0, cutoff: null });
+  assert.equal(db.calls.length, 0);
+});
+
+test('an empty expired range costs one query, and a short table one batch', async () => {
+  const db = purgeDb({ batches: [7] });
+  const result = await audit.purgeExpired(db, { days: 30, now: new Date('2026-11-26T00:00:00.000Z') });
+  assert.equal(result.deleted, 7);
+  assert.equal(db.calls.length, 1);
+});

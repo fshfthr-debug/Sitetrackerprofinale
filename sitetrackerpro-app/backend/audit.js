@@ -47,7 +47,9 @@ const ACTIONS = {
   DELETE_BIM_COMPONENTS: 'delete.bim_components',
   DELETE_GIS_DATASET: 'delete.gis_dataset',
   DELETE_GIS_QUERY: 'delete.gis_query',
-  DELETE_ALIGNMENT_POINT: 'delete.alignment_point'
+  DELETE_ALIGNMENT_POINT: 'delete.alignment_point',
+  // Recorded by the retention job, so a gap in the history is explained by an entry in it.
+  PURGE: 'audit.purge'
 };
 
 // The same wording the screen uses, kept server-side so the CSV reads like the app instead of
@@ -68,13 +70,69 @@ const ACTION_LABELS = {
   'delete.bim_components': 'Take-off rows deleted',
   'delete.gis_dataset': 'GIS dataset deleted',
   'delete.gis_query': 'Saved query deleted',
-  'delete.alignment_point': 'Alignment point deleted'
+  'delete.alignment_point': 'Alignment point deleted',
+  'audit.purge': 'Old audit entries removed'
 };
 
 // A download is opened on somebody else's machine and has to be a complete document, so it is
 // not paged. The cap is only there so a decade-old trail cannot exhaust the instance's memory;
 // a client needing more than this exports month by month using the date filters.
 const EXPORT_LIMIT = 20000;
+
+// ======================= RETENTION =======================
+// The trail is append-only apart from one job: entries older than the retention window are
+// deleted, so "who deleted that dataset?" stays answerable for a couple of years without the
+// table growing for ever. Two years covers a dispute, an audit or a handover; a client who
+// needs a longer paper trail raises AUDIT_RETENTION_DAYS rather than the code.
+const DEFAULT_RETENTION_DAYS = 730;
+// Anything shorter than a month would let a retention typo erase recent work, so it is floored.
+const MIN_RETENTION_DAYS = 30;
+// PostgreSQL deletes and the rows they free both have to fit in memory at once, so the purge
+// walks the table in batches instead of issuing one DELETE over everything that expired.
+const PURGE_BATCH_SIZE = 5000;
+const MAX_PURGE_BATCHES = 40;
+
+/**
+ * AUDIT_RETENTION_DAYS as a number of days. Empty or unreadable falls back to the default;
+ * 0 means keep everything, which is the whole opt-out.
+ */
+function retentionDays(env = process.env) {
+  const raw = env && env.AUDIT_RETENTION_DAYS;
+  if (raw === undefined || raw === null || String(raw).trim() === '') return DEFAULT_RETENTION_DAYS;
+  const days = Number.parseInt(String(raw).trim(), 10);
+  if (!Number.isInteger(days) || days < 0) return DEFAULT_RETENTION_DAYS;
+  if (days === 0) return 0;
+  return Math.max(days, MIN_RETENTION_DAYS);
+}
+
+/**
+ * Deletes entries older than the window, in batches, and reports how many went. Callers log
+ * the count and record it as an event; a failure here must not stop the app, so it throws and
+ * the job decides.
+ */
+async function purgeExpired(db, { days = retentionDays(), now = new Date(), batchSize = PURGE_BATCH_SIZE } = {}) {
+  if (!days) return { deleted: 0, cutoff: null };
+
+  const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);
+  let deleted = 0;
+
+  for (let batch = 0; batch < MAX_PURGE_BATCHES; batch += 1) {
+    const result = await db.query(
+      `DELETE FROM audit_events
+        WHERE id IN (
+          SELECT id FROM audit_events WHERE created_at < $1 ORDER BY created_at, id LIMIT $2
+        )`,
+      [cutoff, batchSize]
+    );
+    const removed = result && typeof result.rowCount === 'number' ? result.rowCount : 0;
+    deleted += removed;
+    // A short batch means the expired range is empty; anything else would delete the same
+    // rows again and cost a round trip per row.
+    if (removed < batchSize) break;
+  }
+
+  return { deleted, cutoff };
+}
 
 function clip(value, max) {
   if (value === null || value === undefined) return null;
@@ -371,6 +429,11 @@ module.exports = {
   ACTIONS,
   ACTION_LABELS,
   EXPORT_LIMIT,
+  DEFAULT_RETENTION_DAYS,
+  MIN_RETENTION_DAYS,
+  PURGE_BATCH_SIZE,
+  retentionDays,
+  purgeExpired,
   toCsv,
   csvCell,
   exportEvents,

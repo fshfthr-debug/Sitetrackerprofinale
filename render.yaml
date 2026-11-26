@@ -70,6 +70,12 @@ services:
         sync: false
       - key: S3_SECRET_ACCESS_KEY
         sync: false
+      # ---------- audit trail retention ----------
+      # Entries older than this many days are deleted once a day, so the audit table cannot
+      # grow for ever. Two years keeps a full paper trail for a client or an auditor; set it
+      # to 0 to keep everything, or raise it for a longer-standing project.
+      - key: AUDIT_RETENTION_DAYS
+        value: "730"
       # Render terminates TLS one hop in front of the app.
       - key: TRUST_PROXY
         value: "1"

@@ -831,7 +831,8 @@ const AUDIT_LABELS = {
   'delete.bim_components': 'Take-off rows deleted',
   'delete.gis_dataset': 'GIS dataset deleted',
   'delete.gis_query': 'Saved query deleted',
-  'delete.alignment_point': 'Alignment point deleted'
+  'delete.alignment_point': 'Alignment point deleted',
+  'audit.purge': 'Old audit entries removed'
 };
 
 const AUDIT_GROUPS = [
@@ -839,7 +840,8 @@ const AUDIT_GROUPS = [
   { value: 'auth.', label: 'Sign-ins' },
   { value: 'user.', label: 'Accounts and roles' },
   { value: 'upload.', label: 'Uploads' },
-  { value: 'delete.', label: 'Deletions' }
+  { value: 'delete.', label: 'Deletions' },
+  { value: 'audit.', label: 'Retention' }
 ];
 
 const AUDIT_PAGE_SIZE = 50;

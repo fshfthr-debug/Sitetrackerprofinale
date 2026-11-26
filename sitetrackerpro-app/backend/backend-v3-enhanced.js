@@ -2898,6 +2898,40 @@ async function storageCheck() {
   return result;
 }
 
+// ==================== AUDIT RETENTION ====================
+// The trail is append-only apart from this job: entries older than AUDIT_RETENTION_DAYS are
+// deleted daily, so the table cannot grow for ever while a client or an auditor still has
+// years of history to read. The default window (two years) covers a dispute, an audit or a
+// handover; AUDIT_RETENTION_DAYS=0 keeps everything. Each purge leaves its own entry, so a
+// reader can see why the history stops where it does.
+const AUDIT_RETENTION_DAYS = audit.retentionDays(process.env);
+const AUDIT_PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const auditRetention = { lastPurgeAt: null, deletedLastRun: null };
+
+async function runAuditRetention({ now = new Date() } = {}) {
+  if (!AUDIT_RETENTION_DAYS) return null;
+  try {
+    const { deleted, cutoff } = await audit.purgeExpired(pool, { days: AUDIT_RETENTION_DAYS, now });
+    auditRetention.lastPurgeAt = new Date().toISOString();
+    auditRetention.deletedLastRun = deleted;
+    if (deleted > 0) {
+      console.log(`🗂️  Audit retention: removed ${deleted} entries older than ${cutoff.toISOString()}`);
+      await audit.record(pool, {
+        action: audit.ACTIONS.PURGE,
+        actorName: 'Retention job',
+        summary: `Removed ${deleted} audit entries older than ${cutoff.toISOString().slice(0, 10)}`
+      });
+    }
+    return deleted;
+  } catch (err) {
+    // A retention failure is a warning, never a reason to stop serving: the trail still works
+    // and this simply runs again tomorrow.
+    auditRetention.lastPurgeAt = new Date().toISOString();
+    console.warn('⚠️ Could not apply audit retention:', err.message || err);
+    return null;
+  }
+}
+
 app.get('/health', async (req, res) => {
   const maptiler = maptilerConfig(process.env);
   // The DWG converter is a separate executable in the image. Probing it here is how an operator
@@ -2918,6 +2952,12 @@ app.get('/health', async (req, res) => {
       id: process.env.RENDER_SERVICE_ID || null,
       name: process.env.RENDER_SERVICE_NAME || null,
       host: process.env.RENDER_EXTERNAL_HOSTNAME || null
+    },
+    audit: {
+      // Entries older than this are deleted daily; 0 means the trail is kept for ever.
+      retentionDays: AUDIT_RETENTION_DAYS,
+      lastPurgeAt: auditRetention.lastPurgeAt,
+      lastPurgeDeleted: auditRetention.deletedLastRun
     },
     basemaps: {
       maptilerVector: maptiler.enabled,
@@ -3090,6 +3130,15 @@ app.listen(PORT, () => {
 
   ensureSchema()
     .then(() => console.log('✅ Rate build-up table ready'))
+    .then(() => {
+      // The first purge runs on boot (the table exists by now), then once a day. Keeping the
+      // timer unref'd means a scheduled wait never holds the process open on its own.
+      runAuditRetention();
+      setInterval(runAuditRetention, AUDIT_PURGE_INTERVAL_MS).unref();
+      if (AUDIT_RETENTION_DAYS) {
+        console.log(`🗂️  Audit retention: entries older than ${AUDIT_RETENTION_DAYS} days are removed daily`);
+      }
+    })
     .catch(err => console.error('⚠️ Could not prepare the rate build-up table:', err.message));
 
   gisModule.ensureGisSchema()
