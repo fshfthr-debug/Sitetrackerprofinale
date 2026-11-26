@@ -2911,6 +2911,14 @@ app.get('/health', async (req, res) => {
   res.json({
     status: 'SiteTrackerPro v3.0 Enhanced - Backend Running',
     timestamp: new Date(),
+    // Which service is answering. Two Render services can point at the same repository, and
+    // then the only way to tell them apart is this: Render fills these in on every service and
+    // none of them is a secret. They stay null anywhere else (local runs, tests).
+    service: {
+      id: process.env.RENDER_SERVICE_ID || null,
+      name: process.env.RENDER_SERVICE_NAME || null,
+      host: process.env.RENDER_EXTERNAL_HOSTNAME || null
+    },
     basemaps: {
       maptilerVector: maptiler.enabled,
       fallback: 'Esri World Street Map / Imagery / Topo / Dark + Light Gray'
