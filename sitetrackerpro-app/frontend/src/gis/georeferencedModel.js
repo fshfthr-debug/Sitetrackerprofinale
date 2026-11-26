@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { buildModelMatrix } from './placementMath.js';
 import { loadIfcModel, IFC_BROWSER_LIMIT_BYTES, largeIfcMessage } from './ifcModel.js';
+import { parseGltfBuffer } from '../bim/gltfLoader.js';
+import { GLB_BROWSER_LIMIT_BYTES, tooLargeMessage } from '../bim/gltfFile.js';
 
 /**
  * A model drawn at its georeferenced anchor on the main GIS map.
@@ -83,10 +85,14 @@ async function loadModelGeometry(placement, { url, authHeaders, wasmPath, onStat
   }
   const buffer = await response.arrayBuffer();
   if (buffer.byteLength === 0) throw new Error('The stored model file is empty.');
+  if (buffer.byteLength > GLB_BROWSER_LIMIT_BYTES) {
+    throw new Error(tooLargeMessage(placement.model.fileName, buffer.byteLength));
+  }
 
   status('loading', 'Reading glTF…');
-  const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader');
-  const gltf = await new GLTFLoader().parseAsync(buffer, '');
+  // Shared loader: Draco and Meshopt compressed GLBs are decompressed here, and
+  // a legacy glTF 1.0 or mislabelled file is reported by name, not as "failed".
+  const gltf = await parseGltfBuffer(buffer, placement.model.fileName || 'model.glb');
 
   // glTF is Y-up; the layer works in (east, north, up). Geometry is left where the file puts it:
   // the saved transform says the anchor is the *model origin*, so shifting the geometry to its

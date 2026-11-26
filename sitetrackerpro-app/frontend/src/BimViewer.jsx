@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { colourForType, geometryFromPlacedGeometry } from './bim/ifcGeometry';
+import { GLB_BROWSER_LIMIT_BYTES, isGltfFileName, tooLargeMessage } from './bim/gltfFile';
+import { parseGltfBuffer } from './bim/gltfLoader';
 
 // ---------------------------------------------------------------------------
 // BIM viewer built on three.js (MIT) + web-ifc (MPL-2.0).
@@ -723,8 +725,9 @@ export default function BimViewer({ token, projects = [], projectId }) {
     setError('');
     setStatus('Reading glTF…');
     try {
-      const { GLTFLoader } = await import('three/examples/jsm/loaders/GLTFLoader');
-      const gltf = await new GLTFLoader().parseAsync(arrayBuffer, '');
+      // Draco and Meshopt decompression are attached by the shared loader, so a
+      // compressed GLB from Blender, Sketchfab or 3D Warehouse opens here too.
+      const gltf = await parseGltfBuffer(arrayBuffer, fileName);
       const root = gltf.scene;
       engine.modelRoot.add(root);
       engine.modelRoot.position.set(0, 0, 0);
@@ -786,19 +789,29 @@ export default function BimViewer({ token, projects = [], projectId }) {
 
   const openFile = (file) => {
     if (!file) return;
-    const lower = file.name.toLowerCase();
-    if (!lower.endsWith('.ifc') && !lower.endsWith('.glb') && !lower.endsWith('.gltf')) {
+    // The extension decides, in any letter case. The browser's MIME type is not
+    // used: a .glb often arrives as application/octet-stream or an empty "".
+    const lower = String(file.name || '').toLowerCase();
+    const isIfc = lower.endsWith('.ifc');
+    const isGltf = isGltfFileName(lower);
+    if (!isIfc && !isGltf) {
       setError(lower.endsWith('.dwg') || lower.endsWith('.dxf')
         ? 'DWG and DXF are CAD drawings, not BIM models. Ask for an IFC export, or import a CSV take-off on the BIM Import screen.'
-        : 'Unsupported file type. Open an IFC, GLB or glTF file.');
+        : 'Unsupported file type. Open an IFC (.ifc), a binary glTF (.glb) or a glTF JSON (.gltf) file.');
       return;
     }
     setError('');
+    // Refuse an oversized model before reading it, not after the tab has spent
+    // a minute loading it into memory.
+    if (isGltf && file.size > GLB_BROWSER_LIMIT_BYTES) {
+      setError(tooLargeMessage(file.name, file.size));
+      return;
+    }
     if (!resetEngine()) return;
     engineRef.current.measureGroup.clear();
     const reader = new FileReader();
     reader.onload = () => {
-      if (lower.endsWith('.ifc')) loadIfc(reader.result, file.name);
+      if (isIfc) loadIfc(reader.result, file.name);
       else loadGltf(reader.result, file.name);
     };
     reader.readAsArrayBuffer(file);

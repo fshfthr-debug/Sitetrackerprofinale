@@ -15,9 +15,9 @@
   },
   "proxy": "http://127.0.0.1:3001",
   "scripts": {
-    "prestart": "node scripts/copy-web-ifc-wasm.js",
+    "prestart": "node scripts/copy-web-ifc-wasm.js && node scripts/copy-draco-decoders.js",
     "start": "react-scripts start",
-    "prebuild": "node scripts/copy-web-ifc-wasm.js",
+    "prebuild": "node scripts/copy-web-ifc-wasm.js && node scripts/copy-draco-decoders.js",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
