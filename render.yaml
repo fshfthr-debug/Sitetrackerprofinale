@@ -46,6 +46,30 @@ services:
       # restart until the disk is mounted (see the note at the bottom).
       - key: UPLOAD_DIR
         value: /app/uploads
+
+      # ---------- object storage (Supabase Storage, S3-compatible) ----------
+      # These are declared here on purpose. Without them the app silently falls back to
+      # UPLOAD_DIR, and on the free plan that disk is rebuilt on every deploy, so every
+      # uploaded BIM model, take-off and GIS import disappears without an error.
+      #
+      # Only the bucket name is written down: it is public (GET /health reports it) and it
+      # is what the app must use. Every credential is `sync: false`, which means "keep the
+      # value from the dashboard" - no key ever reaches this repository, and a blueprint
+      # sync does not delete the values you pasted into Render.
+      #
+      # If the bucket is ever renamed, change it here AND in the dashboard, or uploads fail.
+      - key: S3_BUCKET
+        value: sitetrackerpro-files
+      # Supabase: Project Settings -> Storage -> S3 connection. Region is the project's.
+      - key: S3_REGION
+        sync: false
+      # Supabase: https://<project-ref>.supabase.co/storage/v1/s3  (path-style is forced)
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
       # Render terminates TLS one hop in front of the app.
       - key: TRUST_PROXY
         value: "1"
