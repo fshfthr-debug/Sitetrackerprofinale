@@ -497,7 +497,7 @@
   --surface-3: rgba(255, 255, 255, 0.1); --ink: #e7eeea; --ink-2: #c4cec9; --ink-3: #9aa8a2;
   --line: rgba(255, 255, 255, 0.12); --line-strong: rgba(255, 255, 255, 0.18);
   --danger: #f1998f; --signal: #7fd3b2; --copper: #63b8e8;
-  --copper-soft: rgba(0, 99, 163, 0.2); --danger-soft: rgba(168, 63, 55, 0.24);
+  --copper-soft: rgba(0, 99, 163, 0.2); --copper-strong: #d3e9fa; --danger-soft: rgba(168, 63, 55, 0.24);
 }
 .float-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;
