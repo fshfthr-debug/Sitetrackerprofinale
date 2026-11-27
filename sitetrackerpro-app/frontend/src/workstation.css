@@ -676,6 +676,31 @@ html[data-gis-theme='light'] .clash-list button { color: var(--ink); }
 html[data-gis-theme='light'] .clash-list button:hover { background: var(--surface-2); border-color: var(--line); }
 html[data-gis-theme='light'] .gis-toast { background: rgba(255, 253, 249, 0.95); border-color: var(--line-strong); color: var(--ink); }
 html[data-gis-theme='light'] .gis-toast.error { color: var(--danger); }
+/* The canvas itself and MapLibre's own controls: without these the zoom stack and
+   scale bar stay dark tiles floating on a paper map. */
+html[data-gis-theme='light'] .gis-map-column { background: #f5f2ea; }
+html[data-gis-theme='light'] .gis-studio .maplibregl-ctrl-group {
+  background: rgba(255, 253, 249, 0.94); border-color: rgba(10, 24, 38, 0.14);
+  box-shadow: 0 6px 18px rgba(10, 24, 38, 0.12);
+}
+html[data-gis-theme='light'] .gis-studio .maplibregl-ctrl-group button + button { border-top-color: var(--line); }
+html[data-gis-theme='light'] .gis-studio .maplibregl-ctrl-group button span { filter: none; }
+html[data-gis-theme='light'] .gis-studio .maplibregl-ctrl-scale {
+  background: rgba(255, 253, 249, 0.88); color: var(--ink-2); border-color: rgba(10, 24, 38, 0.4);
+}
+html[data-gis-theme='light'] .gis-studio .maplibregl-ctrl-attrib { background: rgba(255, 253, 249, 0.82) !important; }
+html[data-gis-theme='light'] .gis-studio .maplibregl-ctrl-attrib a { color: var(--ink-3); }
+html[data-gis-theme='light'] .gis-studio .maplibregl-ctrl-attrib-button { filter: none; }
+html[data-gis-theme='light'] .gis-rail.gis-glass::-webkit-scrollbar-thumb { background: rgba(10, 24, 38, 0.18); }
+html[data-gis-theme='light'] .gis-rail.gis-glass code { color: #8a4b12; }
+html[data-gis-theme='light'] .subbar-sep,
+html[data-gis-theme='light'] .tool-dock-divider { background: var(--line); }
+html[data-gis-theme='light'] .link-btn { color: var(--copper-strong); }
+html[data-gis-theme='light'] .clash-summary.warn { color: var(--danger); border-color: rgba(168, 53, 44, 0.35); background: var(--danger-soft); }
+html[data-gis-theme='light'] .clash-summary.clear { color: var(--signal-strong); border-color: rgba(22, 122, 91, 0.35); background: #ecf5f1; }
+html[data-gis-theme='light'] .balance-bar { background: rgba(10, 24, 38, 0.08); }
+html[data-gis-theme='light'] .net-row.spoil strong { color: #a3560f; }
+html[data-gis-theme='light'] .net-row.borrow strong { color: #1d4ed8; }
 
 /* --------------------------------------------------------------- responsive */
 @media (max-width: 1400px) {

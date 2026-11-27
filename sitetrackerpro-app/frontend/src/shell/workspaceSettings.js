@@ -8,11 +8,14 @@
 // `pendingGisCommand` until the workspace consumes it.
 // ============================================================================
 
-const STORAGE_KEY = 'stp.workspace.settings';
+// v2: the GIS studio now opens light to match the rest of the app, so the old key's
+// stored dark default is deliberately not read. The theme switch still works and
+// still persists once an operator picks something.
+const STORAGE_KEY = 'stp.workspace.settings.v2';
 
 const DEFAULTS = {
-  gisTheme: 'dark',
-  basemap: 'dark'
+  gisTheme: 'light',
+  basemap: 'street'
 };
 
 function readStored() {
@@ -22,7 +25,7 @@ function readStored() {
     if (!raw) return { ...DEFAULTS };
     const parsed = JSON.parse(raw);
     return {
-      gisTheme: parsed.gisTheme === 'light' ? 'light' : 'dark',
+      gisTheme: parsed.gisTheme === 'dark' ? 'dark' : 'light',
       basemap: typeof parsed.basemap === 'string' && parsed.basemap ? parsed.basemap : DEFAULTS.basemap
     };
   } catch (err) {
