@@ -290,14 +290,6 @@ export default function CommandBar({
       { label: 'Slope hazards', icon: 'activity', run: () => goGis('tool:clash-slope') },
       { label: 'Export DXF', icon: 'download', run: () => goGis('export:dxf') }
     ],
-    control: [
-      { label: 'Control points', icon: 'compass', run: () => navigate('surveying') },
-      { label: 'Fit on map', icon: 'maximize', run: () => goGis('map:fit') }
-    ],
-    control: [
-      { label: 'Control points', icon: 'compass', run: () => navigate('surveying') },
-      { label: 'Fit on map', icon: 'maximize', run: () => goGis('map:fit') }
-    ],
     cost: [
       { label: 'Quantity survey', icon: 'clipboard', run: () => navigate('quantity-survey') },
       { label: 'Materials', icon: 'box', run: () => navigate('materials') },

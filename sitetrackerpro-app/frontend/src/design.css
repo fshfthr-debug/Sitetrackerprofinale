@@ -1782,6 +1782,14 @@ code, kbd, samp {
 .gis-project label { color: var(--ink-3); font-size: 9px; font-weight: 600; letter-spacing: 0.04em; }
 .gis-project select { max-width: 185px; padding-right: 0; color: var(--ink); font-size: 11px; font-weight: 550; background: transparent; border: 0; outline: 0; appearance: none; }
 
+/* Read-only project chip: the project is changed in the command bar, never here. */
+.gis-project.is-readonly { padding-right: 11px; }
+.gis-project.is-readonly::after { display: none; }
+.gis-project strong {
+  max-width: 185px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink); font-size: 11px; font-weight: 550;
+}
+
 .gis-tabs {
   display: inline-flex;
   gap: 2px;

@@ -147,14 +147,14 @@ export default function SiteTrackerPro() {
         />
       )}
       {currentScreen === 'new-project' && <NewProjectScreen token={token} fetchProjects={fetchProjects} setCurrentScreen={setCurrentScreen} />}
-      {currentScreen === 'bim-import' && <BimImportScreen token={token} projects={projects} />}
-      {currentScreen === 'quantity-survey' && <QuantitySurveyScreen token={token} projects={projects} />}
-      {currentScreen === 'project-dashboard' && <ProjectDashboardScreen token={token} projects={projects} setCurrentScreen={setCurrentScreen} setSelectedProject={setSelectedProject} />}
-      {currentScreen === 'surveying' && <SurveyingControlPointsScreen token={token} projects={projects} />}
+      {currentScreen === 'bim-import' && <BimImportScreen token={token} projects={projects} activeProject={activeProject} />}
+      {currentScreen === 'quantity-survey' && <QuantitySurveyScreen token={token} projects={projects} activeProject={activeProject} />}
+      {currentScreen === 'project-dashboard' && <ProjectDashboardScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} setSelectedProject={setSelectedProject} />}
+      {currentScreen === 'surveying' && <SurveyingControlPointsScreen token={token} projects={projects} activeProject={activeProject} />}
       {currentScreen === '3d-viewer' && <ThreeDViewerScreen token={token} projects={projects} activeProject={activeProject} />}
       {currentScreen === 'gis' && <GisWorkspace token={token} projects={projects} activeProject={activeProject} />}
-      {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} />}
-      {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} />}
+      {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} activeProject={activeProject} />}
+      {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} activeProject={activeProject} />}
       {currentScreen === 'team' && <TeamScreen token={token} />}
       {currentScreen === 'audit' && <AuditScreen token={token} />}
       {currentScreen === 'account' && <AccountScreen token={token} />}
@@ -2362,8 +2362,9 @@ function DashboardScreen({ token, projects, activeProject, setSelectedProject, s
 }
 
 // ===================== BIM IMPORT SCREEN (NEW) =====================
-function BimImportScreen({ token, projects }) {
-  const [projectId, setProjectId] = useState('');
+function BimImportScreen({ token, projects, activeProject }) {
+  // The project is chosen once, in the command bar; this screen reads it.
+  const projectId = activeProject?.id || '';
   const [file, setFile] = useState(null);
   const [paste, setPaste] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2487,13 +2488,10 @@ function BimImportScreen({ token, projects }) {
           </p>
         </div>
         <div className="page-actions">
-          <div className="gis-project">
+          <div className="gis-project is-readonly">
             <Icon name="building" size={13} />
-            <label htmlFor="bim-project">Project</label>
-            <select id="bim-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Select project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label>Project</label>
+            <strong>{activeProject?.name || 'None — set it in the top bar'}</strong>
           </div>
           <button onClick={downloadTemplate} className="btn" type="button">
             <Icon name="download" size={13} /> CSV template
@@ -2779,8 +2777,8 @@ function ProgressTrendChart({ rows, budget }) {
 }
 
 // ===================== PROJECT DASHBOARD (PROGRESS vs BUDGET + FRAUD ALERTS) =====================
-function ProjectDashboardScreen({ token, projects, setCurrentScreen, setSelectedProject }) {
-  const [projectId, setProjectId] = useState('');
+function ProjectDashboardScreen({ token, projects, activeProject, setCurrentScreen, setSelectedProject }) {
+  const projectId = activeProject?.id || '';
   const [project, setProject] = useState(null);
   const [progress, setProgress] = useState(null);
   const [history, setHistory] = useState([]);
@@ -2917,13 +2915,10 @@ function ProjectDashboardScreen({ token, projects, setCurrentScreen, setSelected
           </p>
         </div>
         <div className="page-actions">
-          <div className="gis-project">
+          <div className="gis-project is-readonly">
             <Icon name="chart" size={13} />
-            <label htmlFor="progress-project">Project</label>
-            <select id="progress-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Select project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label>Project</label>
+            <strong>{activeProject?.name || 'None — set it in the top bar'}</strong>
           </div>
           {projectId && (
             <button
@@ -3201,8 +3196,8 @@ function ProjectDashboardScreen({ token, projects, setCurrentScreen, setSelected
 }
 
 // ===================== SURVEYING CONTROL POINTS SCREEN (NEW) =====================
-function SurveyingControlPointsScreen({ token, projects }) {
-  const [projectId, setProjectId] = useState('');
+function SurveyingControlPointsScreen({ token, projects, activeProject }) {
+  const projectId = activeProject?.id || '';
   const [controlPointName, setControlPointName] = useState('BM-01');
   const [verticalDatum, setVerticalDatum] = useState('Project benchmark as recorded');
   const [pointStatus, setPointStatus] = useState('submitted');
@@ -3425,13 +3420,10 @@ function SurveyingControlPointsScreen({ token, projects }) {
           </p>
         </div>
         <div className="page-actions">
-          <div className="gis-project">
+          <div className="gis-project is-readonly">
             <Icon name="locate" size={13} />
-            <label htmlFor="survey-project">Project</label>
-            <select id="survey-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} required>
-              <option value="">Select project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label>Project</label>
+            <strong>{activeProject?.name || 'None — set it in the top bar'}</strong>
           </div>
         </div>
       </div>
@@ -3804,8 +3796,8 @@ const colourForMaterial = (name) => {
   return MATERIAL_COLOURS.get(key);
 };
 
-function ChartViewerScreen({ token, projects, embedded = false }) {
-  const [projectId, setProjectId] = useState('');
+function ChartViewerScreen({ token, projects, activeProject, embedded = false }) {
+  const projectId = activeProject?.id || '';
   const [modelData, setModelData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -4315,13 +4307,10 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
             <div className="panel-eyebrow">Component take-off chart</div>
             <p className="helper" style={{ marginTop: 3 }}>The linked building model, or one block per imported take-off row when the quantity view is on.</p>
           </div>
-          <div className="gis-project">
+          <div className="gis-project is-readonly">
             <Icon name="cube" size={13} />
-            <label htmlFor="twin-project-select">Project</label>
-            <select id="twin-project-select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Select project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label>Project</label>
+            <strong>{activeProject?.name || 'None — set it in the top bar'}</strong>
           </div>
         </div>
       ) : (
@@ -4336,13 +4325,10 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
             </p>
           </div>
           <div className="page-actions">
-            <div className="gis-project">
+            <div className="gis-project is-readonly">
               <Icon name="cube" size={13} />
-              <label htmlFor="twin-project-select">Project</label>
-              <select id="twin-project-select" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-                <option value="">Select project</option>
-                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-              </select>
+              <label>Project</label>
+              <strong>{activeProject?.name || 'None — set it in the top bar'}</strong>
             </div>
           </div>
         </div>
@@ -4785,15 +4771,15 @@ function ThreeDViewerScreen({ token, projects, activeProject }) {
           <BimViewer token={token} projects={projects} activeProject={activeProject} />
         </React.Suspense>
       ) : (
-        <ChartViewerScreen token={token} projects={projects} embedded />
+        <ChartViewerScreen token={token} projects={projects} activeProject={activeProject} embedded />
       )}
     </div>
   );
 }
 
 // ===================== QUANTITY SURVEY SCREEN (NEW) =====================
-function QuantitySurveyScreen({ token, projects }) {
-  const [projectId, setProjectId] = useState('');
+function QuantitySurveyScreen({ token, projects, activeProject }) {
+  const projectId = activeProject?.id || '';
   const [survey, setSurvey] = useState(null);
   const [bom, setBom] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -4952,13 +4938,10 @@ function QuantitySurveyScreen({ token, projects }) {
           </p>
         </div>
         <div className="page-actions">
-          <div className="gis-project">
+          <div className="gis-project is-readonly">
             <Icon name="calculator" size={13} />
-            <label htmlFor="qs-project">Project</label>
-            <select id="qs-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Select project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label>Project</label>
+            <strong>{activeProject?.name || 'None — set it in the top bar'}</strong>
           </div>
           {summary.length > 0 && (
             <button className="btn" onClick={exportSurvey}>
@@ -5151,8 +5134,8 @@ function QuantitySurveyScreen({ token, projects }) {
 }
 
 // ===================== MATERIALS DATABASE SCREEN (NEW) =====================
-function MaterialsDatabaseScreen({ token, projects }) {
-  const [projectId, setProjectId] = useState('');
+function MaterialsDatabaseScreen({ token, projects, activeProject }) {
+  const projectId = activeProject?.id || '';
   const [category, setCategory] = useState('Foundation');
   const [materials, setMaterials] = useState([]);
   const [customMaterials, setCustomMaterials] = useState([]);
@@ -5212,13 +5195,10 @@ function MaterialsDatabaseScreen({ token, projects }) {
           </p>
         </div>
         <div className="page-actions">
-          <div className="gis-project">
+          <div className="gis-project is-readonly">
             <Icon name="layers" size={13} />
-            <label htmlFor="materials-project">Custom materials for</label>
-            <select id="materials-project" value={projectId} onChange={(e) => setProjectId(e.target.value)}>
-              <option value="">Optional — no project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label>Custom materials for</label>
+            <strong>{activeProject?.name || 'No project — standard library only'}</strong>
           </div>
         </div>
       </div>
@@ -5399,8 +5379,8 @@ function MaterialsDatabaseScreen({ token, projects }) {
 }
 
 // ===================== FRAUD DETECTION SCREEN =====================
-function FraudDetectionScreen({ token, projects }) {
-  const [projectId, setProjectId] = useState('');
+function FraudDetectionScreen({ token, projects, activeProject }) {
+  const projectId = activeProject?.id || '';
   const [actualQty, setActualQty] = useState('60');
   const [expectedQty, setExpectedQty] = useState('50');
   const [actualPrice, setActualPrice] = useState('10.20');
@@ -5446,13 +5426,10 @@ function FraudDetectionScreen({ token, projects }) {
           </p>
         </div>
         <div className="page-actions">
-          <div className="gis-project">
+          <div className="gis-project is-readonly">
             <Icon name="shield" size={13} />
-            <label htmlFor="risk-project">Project</label>
-            <select id="risk-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} required>
-              <option value="">Select project</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <label>Project</label>
+            <strong>{activeProject?.name || 'None — set it in the top bar'}</strong>
           </div>
         </div>
       </div>
