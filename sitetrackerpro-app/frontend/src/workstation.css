@@ -699,6 +699,15 @@ html[data-gis-theme='light'] .link-btn { color: var(--copper-strong); }
 html[data-gis-theme='light'] .clash-summary.warn { color: var(--danger); border-color: rgba(168, 53, 44, 0.35); background: var(--danger-soft); }
 html[data-gis-theme='light'] .clash-summary.clear { color: var(--signal-strong); border-color: rgba(22, 122, 91, 0.35); background: #ecf5f1; }
 html[data-gis-theme='light'] .balance-bar { background: rgba(10, 24, 38, 0.08); }
+/* Error banners: the dark-theme rule is pale pink on translucent red, which all but
+   disappears on the white panels. */
+html[data-gis-theme='light'] .float-error,
+html[data-gis-theme='light'] .clash-summary.warn {
+  color: #8f2d24; background: #fbe9e7; border-color: rgba(168, 53, 44, 0.38);
+}
+html[data-gis-theme='light'] .cutfill-result { border-top-color: var(--line); }
+html[data-gis-theme='light'] .tel-basemap.is-fallback,
+html[data-gis-theme='light'] .tel-basemap.is-fallback .tel-key { color: #a3560f; }
 html[data-gis-theme='light'] .net-row.spoil strong { color: #a3560f; }
 html[data-gis-theme='light'] .net-row.borrow strong { color: #1d4ed8; }
 
