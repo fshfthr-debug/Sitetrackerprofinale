@@ -147,18 +147,50 @@ export default function SiteTrackerPro() {
         />
       )}
       {currentScreen === 'new-project' && <NewProjectScreen token={token} fetchProjects={fetchProjects} setCurrentScreen={setCurrentScreen} />}
-      {currentScreen === 'bim-import' && <BimImportScreen token={token} projects={projects} activeProject={activeProject} />}
-      {currentScreen === 'quantity-survey' && <QuantitySurveyScreen token={token} projects={projects} activeProject={activeProject} />}
+      {currentScreen === 'bim-import' && <BimImportScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} />}
+      {currentScreen === 'quantity-survey' && <QuantitySurveyScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} />}
       {currentScreen === 'project-dashboard' && <ProjectDashboardScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} setSelectedProject={setSelectedProject} />}
-      {currentScreen === 'surveying' && <SurveyingControlPointsScreen token={token} projects={projects} activeProject={activeProject} />}
-      {currentScreen === '3d-viewer' && <ThreeDViewerScreen token={token} projects={projects} activeProject={activeProject} />}
-      {currentScreen === 'gis' && <GisWorkspace token={token} projects={projects} activeProject={activeProject} />}
-      {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} activeProject={activeProject} />}
-      {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} activeProject={activeProject} />}
+      {currentScreen === 'surveying' && <SurveyingControlPointsScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} />}
+      {currentScreen === '3d-viewer' && <ThreeDViewerScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} />}
+      {currentScreen === 'gis' && (
+        <GisWorkspace
+          token={token}
+          projects={projects}
+          activeProject={activeProject}
+          onCreateProject={() => setCurrentScreen('new-project')}
+        />
+      )}
+      {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} />}
+      {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} />}
       {currentScreen === 'team' && <TeamScreen token={token} />}
       {currentScreen === 'audit' && <AuditScreen token={token} />}
       {currentScreen === 'account' && <AccountScreen token={token} />}
     </AppShell>
+  );
+}
+
+// ===================== NO ACTIVE PROJECT =====================
+// One explanation for every screen that needs a project. It says where the project comes from
+// (the top bar) and gives the two ways out, instead of leaving a screen blank or a form disabled.
+function NoProjectState({ icon = 'projects', title, detail, setCurrentScreen }) {
+  return (
+    <div className="empty">
+      <div className="empty-icon"><Icon name={icon} /></div>
+      <h4>{title}</h4>
+      <p>{detail}</p>
+      <p className="helper" style={{ marginTop: 6 }}>
+        No project is active. Choose one from the project list in the top bar — everything on this
+        screen follows it — or create a project first.
+      </p>
+      {setCurrentScreen && (
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+          <button className="btn btn-primary btn-sm" onClick={() => setCurrentScreen('new-project')}>
+            <Icon name="plus" size={13} /> Create a project
+          </button>
+          <button className="btn btn-sm" onClick={() => setCurrentScreen('projects')}>Open projects</button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -2362,7 +2394,7 @@ function DashboardScreen({ token, projects, activeProject, setSelectedProject, s
 }
 
 // ===================== BIM IMPORT SCREEN (NEW) =====================
-function BimImportScreen({ token, projects, activeProject }) {
+function BimImportScreen({ token, projects, activeProject, setCurrentScreen }) {
   // The project is chosen once, in the command bar; this screen reads it.
   const projectId = activeProject?.id || '';
   const [file, setFile] = useState(null);
@@ -2391,7 +2423,7 @@ function BimImportScreen({ token, projects, activeProject }) {
 
   const handleUpload = async (e) => {
     e.preventDefault();
-    if (!projectId) { setError('Select a project first.'); return; }
+    if (!projectId) { setError('Choose a project in the top bar first.'); return; }
     if (!file) { setError('Choose a CSV or TSV take-off file first.'); return; }
 
     const form = new FormData();
@@ -2415,7 +2447,7 @@ function BimImportScreen({ token, projects, activeProject }) {
 
   const handlePaste = async (e) => {
     e.preventDefault();
-    if (!projectId) { setError('Select a project first.'); return; }
+    if (!projectId) { setError('Choose a project in the top bar first.'); return; }
     if (!paste.trim()) { setError('Paste some take-off rows first.'); return; }
 
     setBusy(true); setError(''); setReport(null);
@@ -2502,11 +2534,12 @@ function BimImportScreen({ token, projects, activeProject }) {
       {error && <div className="section-note" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: '#ecc9c4' }}><Icon name="alert" size={13} /> {error}</div>}
 
       {!projectId ? (
-        <div className="empty">
-          <div className="empty-icon"><Icon name="upload" /></div>
-          <h4>Choose a project to import a take-off</h4>
-          <p>Components are stored against one project, then shared with the quantity survey and digital twin.</p>
-        </div>
+        <NoProjectState
+          icon="upload"
+          title="No project to import a take-off into"
+          detail="Components are stored against one project, then shared with the quantity survey and digital twin."
+          setCurrentScreen={setCurrentScreen}
+        />
       ) : (
         <>
           <div className="kpi-grid">
@@ -2939,11 +2972,12 @@ function ProjectDashboardScreen({ token, projects, activeProject, setCurrentScre
       {notice && <div className="section-note"><Icon name="checkCircle" size={13} /> {notice}</div>}
 
       {!projectId ? (
-        <div className="empty">
-          <div className="empty-icon"><Icon name="chart" /></div>
-          <h4>Choose a project to open its commercial position</h4>
-          <p>Progress entries are kept over time so the burn gap and forecast can be reviewed.</p>
-        </div>
+        <NoProjectState
+          icon="chart"
+          title="No project to report progress for"
+          detail="Progress entries are kept over time so the burn gap and forecast can be reviewed."
+          setCurrentScreen={setCurrentScreen}
+        />
       ) : (
         <>
           <div className="kpi-grid">
@@ -3196,7 +3230,7 @@ function ProjectDashboardScreen({ token, projects, activeProject, setCurrentScre
 }
 
 // ===================== SURVEYING CONTROL POINTS SCREEN (NEW) =====================
-function SurveyingControlPointsScreen({ token, projects, activeProject }) {
+function SurveyingControlPointsScreen({ token, projects, activeProject, setCurrentScreen }) {
   const projectId = activeProject?.id || '';
   const [controlPointName, setControlPointName] = useState('BM-01');
   const [verticalDatum, setVerticalDatum] = useState('Project benchmark as recorded');
@@ -3260,7 +3294,7 @@ function SurveyingControlPointsScreen({ token, projects, activeProject }) {
 
   const handleCalculate = async (e) => {
     e.preventDefault();
-    if (!projectId) { setError('Select a project before calculating earthworks.'); return; }
+    if (!projectId) { setError('Choose a project in the top bar before calculating earthworks.'); return; }
 
     setBusy(true); setError(''); setSaved(null);
     try {
@@ -3326,7 +3360,7 @@ function SurveyingControlPointsScreen({ token, projects, activeProject }) {
   };
 
   const handleImport = async () => {
-    if (!projectId) { setImportError('Select a project before importing control points.'); return; }
+    if (!projectId) { setImportError('Choose a project in the top bar before importing control points.'); return; }
     if (!importParsed || importParsed.rows.length === 0) {
       setImportError('Choose a valid CSV or TXT file first.');
       return;
@@ -3431,11 +3465,12 @@ function SurveyingControlPointsScreen({ token, projects, activeProject }) {
       {error && <div className="section-note" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: '#ecc9c4' }}><Icon name="alert" size={13} /> {error}</div>}
 
       {!projectId ? (
-        <div className="empty">
-          <div className="empty-icon"><Icon name="locate" /></div>
-          <h4>Choose a project to begin</h4>
-          <p>Control points and earthwork calculations are stored against one project and shared with its twin.</p>
-        </div>
+        <NoProjectState
+          icon="locate"
+          title="No project to record survey control for"
+          detail="Control points and earthwork calculations are stored against one project and shared with its twin."
+          setCurrentScreen={setCurrentScreen}
+        />
       ) : (
         <>
           <div className="screen-grid">
@@ -3796,7 +3831,7 @@ const colourForMaterial = (name) => {
   return MATERIAL_COLOURS.get(key);
 };
 
-function ChartViewerScreen({ token, projects, activeProject, embedded = false }) {
+function ChartViewerScreen({ token, projects, activeProject, embedded = false, setCurrentScreen }) {
   const projectId = activeProject?.id || '';
   const [modelData, setModelData] = useState(null);
   const [error, setError] = useState('');
@@ -4513,11 +4548,12 @@ function ChartViewerScreen({ token, projects, activeProject, embedded = false })
       )}
 
       {!projectId ? (
-        <div className="empty">
-          <div className="empty-icon"><Icon name="cube" /></div>
-          <h4>Select a project to build its twin</h4>
-          <p>The viewer combines imported components, site terrain and the records attached to them.</p>
-        </div>
+        <NoProjectState
+          icon="cube"
+          title="No project to build a twin for"
+          detail="The viewer combines imported components, site terrain and the records attached to them."
+          setCurrentScreen={setCurrentScreen}
+        />
       ) : components.length === 0 && !loading && !showModel && (!terrain || !terrainVisible) ? (
         <div className="empty">
           <div className="empty-icon"><Icon name="box" /></div>
@@ -4721,7 +4757,7 @@ function ChartViewerScreen({ token, projects, activeProject, embedded = false })
 }
 
 // ===================== 3D VIEWER (BIM model or take-off chart) =====================
-function ThreeDViewerScreen({ token, projects, activeProject }) {
+function ThreeDViewerScreen({ token, projects, activeProject, setCurrentScreen }) {
   const [view, setView] = useState('bim');
 
   return (
@@ -4771,14 +4807,14 @@ function ThreeDViewerScreen({ token, projects, activeProject }) {
           <BimViewer token={token} projects={projects} activeProject={activeProject} />
         </React.Suspense>
       ) : (
-        <ChartViewerScreen token={token} projects={projects} activeProject={activeProject} embedded />
+        <ChartViewerScreen token={token} projects={projects} activeProject={activeProject} setCurrentScreen={setCurrentScreen} embedded />
       )}
     </div>
   );
 }
 
 // ===================== QUANTITY SURVEY SCREEN (NEW) =====================
-function QuantitySurveyScreen({ token, projects, activeProject }) {
+function QuantitySurveyScreen({ token, projects, activeProject, setCurrentScreen }) {
   const projectId = activeProject?.id || '';
   const [survey, setSurvey] = useState(null);
   const [bom, setBom] = useState(null);
@@ -4821,7 +4857,7 @@ function QuantitySurveyScreen({ token, projects, activeProject }) {
   }, [projectId]);
 
   const handleGenerate = async () => {
-    if (!projectId) { setError('Select a project first.'); return; }
+    if (!projectId) { setError('Choose a project in the top bar first.'); return; }
 
     if (!survey || survey.summary.length === 0) {
       setError('Nothing to put in a BOM yet — import a take-off on the BIM Import screen first.');
@@ -4955,11 +4991,12 @@ function QuantitySurveyScreen({ token, projects, activeProject }) {
       {notice && <div className="section-note"><Icon name="checkCircle" size={13} /> {notice}</div>}
 
       {!projectId ? (
-        <div className="empty">
-          <div className="empty-icon"><Icon name="calculator" /></div>
-          <h4>Choose a project to open its survey</h4>
-          <p>Material totals, rate build-up and the saved BOM all belong to one project.</p>
-        </div>
+        <NoProjectState
+          icon="calculator"
+          title="No project to measure"
+          detail="Material totals, rate build-up and the saved BOM all belong to one project."
+          setCurrentScreen={setCurrentScreen}
+        />
       ) : (
         <>
           <div className="kpi-grid">
@@ -5134,7 +5171,7 @@ function QuantitySurveyScreen({ token, projects, activeProject }) {
 }
 
 // ===================== MATERIALS DATABASE SCREEN (NEW) =====================
-function MaterialsDatabaseScreen({ token, projects, activeProject }) {
+function MaterialsDatabaseScreen({ token, projects, activeProject, setCurrentScreen }) {
   const projectId = activeProject?.id || '';
   const [category, setCategory] = useState('Foundation');
   const [materials, setMaterials] = useState([]);
@@ -5160,7 +5197,7 @@ function MaterialsDatabaseScreen({ token, projects, activeProject }) {
   const handleAddCustom = async (e) => {
     e.preventDefault();
     if (!projectId) {
-      setError('Select a project before adding a custom material.');
+      setError('Choose a project in the top bar before adding a custom material.');
       return;
     }
 
@@ -5287,17 +5324,17 @@ function MaterialsDatabaseScreen({ token, projects, activeProject }) {
             <div className="panel-head">
               <div className="panel-head-copy">
                 <h3>Add custom material</h3>
-                <p>{projectId ? 'Saved against the selected project.' : 'Choose a project above to enable this form.'}</p>
+                <p>{projectId ? 'Saved against the selected project.' : 'Choose a project in the top bar to enable this form.'}</p>
               </div>
               <Icon name="plus" size={14} style={{ color: 'var(--copper)' }} />
             </div>
             {!projectId ? (
               <div className="panel-body">
-                <div className="empty" style={{ minHeight: 140 }}>
-                  <div className="empty-icon"><Icon name="projects" /></div>
-                  <h4>No project selected</h4>
-                  <p>Custom materials need a project so their cost stays in the right record.</p>
-                </div>
+                <NoProjectState
+                  title="No project for custom materials"
+                  detail="Custom materials need a project so their cost stays in the right record. The standard library above still works without one."
+                  setCurrentScreen={setCurrentScreen}
+                />
               </div>
             ) : (
               <form onSubmit={handleAddCustom} className="panel-body">
@@ -5379,7 +5416,7 @@ function MaterialsDatabaseScreen({ token, projects, activeProject }) {
 }
 
 // ===================== FRAUD DETECTION SCREEN =====================
-function FraudDetectionScreen({ token, projects, activeProject }) {
+function FraudDetectionScreen({ token, projects, activeProject, setCurrentScreen }) {
   const projectId = activeProject?.id || '';
   const [actualQty, setActualQty] = useState('60');
   const [expectedQty, setExpectedQty] = useState('50');
@@ -5435,6 +5472,18 @@ function FraudDetectionScreen({ token, projects, activeProject }) {
       </div>
 
       {error && <div className="section-note" style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: '#ecc9c4' }}><Icon name="alert" size={13} /> {error}</div>}
+
+      {!projectId && (
+        <div className="section-note">
+          <Icon name="alert" size={13} /> No project is active, so a delivery cannot be checked yet:
+          the check button stays disabled. Choose a project in the top bar first.
+          {setCurrentScreen && (
+            <button className="btn btn-sm" style={{ marginLeft: 10 }} onClick={() => setCurrentScreen('new-project')}>
+              <Icon name="plus" size={12} /> Create a project
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="screen-grid">
         <form onSubmit={handleAnalyze} className="panel">

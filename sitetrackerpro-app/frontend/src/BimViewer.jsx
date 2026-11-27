@@ -1188,6 +1188,12 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
             Read from the model's own <code>Qto_*</code> sets; anything measured from geometry is marked ≈.
             Nothing is invented.
           </p>
+          {!projectIdInput && (
+            <p style={{ ...styles.hint, margin: '6px 0 0', padding: '7px 9px', border: '1px solid #d7dee7', borderRadius: '5px', background: '#f8fafc' }}>
+              No project is active, so this take-off cannot be sent anywhere yet. The chart and the
+              CSV download still work — choose a project in the top bar to send quantities to it.
+            </p>
+          )}
           <div id="bim-qty">
             {takeoff.length === 0 ? (
               <p style={styles.hint}>Load an IFC model to build a take-off.</p>
@@ -1213,7 +1219,15 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
           </div>
           <div style={{ display: 'flex', gap: '6px', marginTop: '8px', flexWrap: 'wrap' }}>
             <button type="button" style={styles.tool} onClick={downloadCsv}>Download take-off CSV</button>
-            <button type="button" style={styles.tool} onClick={sendToApp} disabled={sending}>{sending ? 'Sending…' : 'Send to app'}</button>
+            <button
+              type="button"
+              style={styles.tool}
+              onClick={sendToApp}
+              disabled={sending || !projectIdInput}
+              title={projectIdInput ? 'Send these quantities to the active project' : 'Choose a project in the top bar first'}
+            >
+              {sending ? 'Sending…' : 'Send to app'}
+            </button>
           </div>
           <p style={{ ...styles.hint, marginTop: '6px' }}>
             {projectIdInput

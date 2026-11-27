@@ -170,7 +170,7 @@ function formatCursor(lngLat, crs, crsList) {
   }
 }
 
-export default function GisWorkspace({ token, projects, activeProject }) {
+export default function GisWorkspace({ token, projects, activeProject, onCreateProject }) {
   // The project is chosen once, in the command bar; every panel here follows it.
   const [projectId, setProjectId] = useState(() => (activeProject?.id ? String(activeProject.id) : ''));
   const [workspaces, setWorkspaces] = useState([]);
@@ -2041,7 +2041,10 @@ export default function GisWorkspace({ token, projects, activeProject }) {
           <div style={styles.card}>
             <h3 style={{ marginTop: 0 }}>Workspaces</h3>
             {!projectId ? (
-              <p style={styles.helper}>Select a project to open its GIS workspaces.</p>
+              <p style={styles.helper}>
+                No project is open. Choose one in the top bar to load its workspaces, layers and
+                survey points here.
+              </p>
             ) : (
               <>
                 {workspaces.length > 0 && (
@@ -2788,6 +2791,22 @@ export default function GisWorkspace({ token, projects, activeProject }) {
 
         <div className="gis-map-column">
           <div className="map-shell gis-map-shell">
+            {!projectId && (
+              <div className="gis-noproject gis-glass" role="status">
+                <Icon name="building" size={18} />
+                <h3>No project open</h3>
+                <p>
+                  Layers, survey points, terrain and the 3D model all belong to a project. Choose one
+                  from the project list in the top bar and this workspace opens with it.
+                </p>
+                {onCreateProject && (
+                  <button type="button" className="gis-noproject-action" onClick={onCreateProject}>
+                    <Icon name="plus" size={13} /> Create a project
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="map-top">
               <div className="map-search">
                 <Icon name="search" size={14} />

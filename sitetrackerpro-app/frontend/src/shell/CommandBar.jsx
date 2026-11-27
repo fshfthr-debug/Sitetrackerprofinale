@@ -348,20 +348,31 @@ export default function CommandBar({
         </div>
 
         <div className="cmd-project">
-          <label className="cmd-project-label" htmlFor="cmd-project-select">
+          <label className="cmd-project-label" htmlFor={projects.length ? 'cmd-project-select' : undefined}>
             <Icon name="building" size={12} /> Project
           </label>
-          <select
-            id="cmd-project-select"
-            value={activeProject?.id || ''}
-            onChange={event => {
-              const project = projects.find(item => String(item.id) === event.target.value);
-              if (project) { onSelectProject(project); navigate('project-details'); }
-            }}
-          >
-            <option value="">Portfolio · all projects</option>
-            {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
-          </select>
+          {projects.length === 0 ? (
+            <button
+              type="button"
+              className="cmd-project-empty"
+              onClick={() => navigate('new-project')}
+              title="There are no projects yet. Create one to open the workspaces."
+            >
+              <Icon name="plus" size={11} /> No projects yet — create one
+            </button>
+          ) : (
+            <select
+              id="cmd-project-select"
+              value={activeProject?.id || ''}
+              onChange={event => {
+                const project = projects.find(item => String(item.id) === event.target.value);
+                if (project) { onSelectProject(project); navigate('project-details'); }
+              }}
+            >
+              <option value="">Portfolio · all projects</option>
+              {projects.map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+            </select>
+          )}
         </div>
 
         <nav className="cmd-menubar" aria-label="Application menus">
