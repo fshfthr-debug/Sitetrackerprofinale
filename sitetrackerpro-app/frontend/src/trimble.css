@@ -13,99 +13,38 @@
    behaviour are unchanged.
    ========================================================================== */
 
-:root {
-  /* surfaces: white on a cool paper grey */
-  --canvas: #f4f6f8;
-  --canvas-deep: #e9edf1;
-  --surface: #ffffff;
-  --surface-2: #f6f8fa;
-  --surface-3: #edf1f4;
-  --surface-raised: #ffffff;
-
-  /* text */
-  --ink: #16191c;
-  --ink-2: #3b4248;
-  --ink-3: #5f676e;
-  --muted: #848c93;
-
-  --line: #e0e5ea;
-  --line-strong: #c7d0d7;
-
-  /* deep blue replaces the old basalt */
-  --basalt: #0a2a40;
-  --basalt-2: #0e334d;
-  --basalt-3: #154363;
-  --basalt-4: #1d547a;
-
-  /* Trimble blue is the single action colour */
-  --copper: #0063a3;
-  --copper-strong: #004d80;
-  --copper-bright: #1a86c9;
-  --copper-soft: #e6f2fa;
-
-  --signal: #167a5b;
-  --signal-strong: #10624a;
-  --signal-soft: #e3f2ec;
-  --amber: #a4610f;
-  --amber-soft: #fbf0dc;
-  --amber-bright: #f5a800;
-  --danger: #a8352c;
-  --danger-soft: #fbe9e7;
-  --sky: #0b6f96;
-  --sky-soft: #e4f0f6;
-  --violet: #5b4b86;
-  --violet-soft: #eeeaf7;
-
-  /* flat geometry: square cards, hairline borders, almost no shadow */
-  --radius-xs: 3px;
-  --radius-sm: 4px;
-  --radius-md: 5px;
-  --radius-lg: 6px;
-  --radius-xl: 8px;
-
-  --shadow-xs: none;
-  --shadow-sm: 0 1px 2px rgba(16, 32, 45, 0.06);
-  --shadow-md: 0 8px 24px rgba(12, 30, 44, 0.09);
-  --shadow-lg: 0 24px 60px rgba(8, 24, 38, 0.18);
-
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}
+/*
+   Colour and type tokens are declared once, in design.css :root. This file is the
+   component-shape layer only: it re-points blocks at those tokens and adjusts
+   geometry (square cards, hairline borders, flat surfaces). No colour is defined here.
+*/
 
 html { background: var(--canvas); }
 
 body {
   background: var(--canvas);
   color: var(--ink);
-  font-size: 14px;
+  font-size: var(--text-ui);
+  line-height: var(--lh-ui);
 }
 
 /* ---------------------------------------------------------------- typography */
 
-h1, h2, h3, h4 { letter-spacing: -0.025em; }
-
 .page-title {
-  font-size: clamp(30px, 3.2vw, 40px);
-  font-weight: 600;
-  letter-spacing: -0.038em;
+  font-size: var(--text-workspace);
+  font-weight: var(--weight-heading);
+  letter-spacing: -0.015em;
 }
 
-.page-sub { font-size: 14px; line-height: 1.6; color: var(--ink-3); }
+.page-sub { font-size: var(--text-ui); line-height: 1.5; color: var(--ink-3); }
 
 .eyebrow {
   color: var(--copper);
-  font-size: 10px;
-  letter-spacing: 0.16em;
+  font-size: var(--text-micro);
+  letter-spacing: 0.12em;
 }
 
 .eyebrow::before { width: 18px; height: 2px; opacity: 1; }
-
-.panel-head h3,
-.panel-head-copy h3 { font-size: 16px; font-weight: 600; }
-
-.panel-head p { font-size: 12px; }
-
-.panel-eyebrow { font-size: 9.5px; }
 
 /* ---------------------------------------------------------------- shell */
 
@@ -134,7 +73,7 @@ h1, h2, h3, h4 { letter-spacing: -0.025em; }
 
 .nav-label {
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--text-micro);
   letter-spacing: 0.16em;
 }
 
@@ -146,7 +85,7 @@ h1, h2, h3, h4 { letter-spacing: -0.025em; }
   border-radius: var(--radius-sm);
 }
 
-.workspace-switch-label { color: var(--ink-3); font-size: 9px; }
+.workspace-switch-label { color: var(--ink-3); font-size: var(--text-micro); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
 .workspace-switch select { color: var(--ink); font-weight: 600; }
 .workspace-switch-chevron { color: var(--muted); }
 
@@ -213,8 +152,8 @@ h1, h2, h3, h4 { letter-spacing: -0.025em; }
 .btn {
   min-height: 36px;
   padding: 0 14px;
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--text-nav);
+  font-weight: var(--weight-heading);
   border-radius: var(--radius-sm);
   box-shadow: none;
 }
@@ -251,7 +190,7 @@ h1, h2, h3, h4 { letter-spacing: -0.025em; }
 }
 
 .btn-copper { color: #ffffff; }
-.btn-sm { min-height: 30px; font-size: 11px; }
+.btn-sm { min-height: 30px; font-size: var(--text-data); }
 
 .input, input[type="text"], input[type="email"], input[type="password"],
 input[type="number"], input[type="date"], select, textarea {
@@ -262,7 +201,7 @@ input[type="number"], input[type="date"], select, textarea {
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid rgba(0, 99, 163, 0.32);
+  outline: 2px solid rgb(var(--accent-rgb) / 0.32);
   outline-offset: 1px;
   border-color: var(--copper);
 }
@@ -439,7 +378,7 @@ textarea:focus-visible {
 .panel-head { padding: 16px 18px; }
 .panel-body { padding: 18px; }
 
-.data-table th { color: var(--ink-3); font-size: 10.5px; }
+.data-table th { color: var(--ink-3); font-size: var(--text-micro); font-weight: 600; letter-spacing: 0.06em; }
 .data-table tbody tr:hover { background: var(--surface-2); }
 
 .panel-action { color: var(--copper); }
@@ -465,7 +404,7 @@ textarea:focus-visible {
 }
 
 .twin-stage .viewer-surface {
-  background: radial-gradient(620px 320px at 50% 0%, #ffffff, #eef2f6 72%);
+  background: radial-gradient(620px 320px at 50% 0%, var(--white), var(--surface-3) 72%);
 }
 
 .twin-label, .viewer-badge { border-radius: var(--radius-sm); }
@@ -505,28 +444,28 @@ textarea:focus-visible {
 }
 
 .auth-brand .brand-word { color: #ffffff; }
-.auth-brand .brand-word span { color: #7fc4ec; }
+.auth-brand .brand-word span { color: var(--cerulean-400); }
 .auth-brand .brand-sub { color: rgba(255, 255, 255, 0.6); }
 
-.auth-kicker { color: #8fd0f5; font-size: 10px; letter-spacing: 0.18em; }
+.auth-kicker { color: var(--cerulean-300); font-size: var(--text-micro); letter-spacing: 0.14em; }
 .auth-kicker::before { width: 26px; height: 2px; }
 
 .auth-copy h1 {
   max-width: 15ch;
   color: #ffffff;
-  font-size: clamp(40px, 4.6vw, 64px);
-  font-weight: 300;
+  font-size: clamp(32px, 3.6vw, 44px);
+  font-weight: 500;
   line-height: 1.02;
   letter-spacing: -0.035em;
 }
 
-.auth-copy h1 em { color: #ffc24a; font-weight: 300; }
+.auth-copy h1 em { color: var(--gold-400); font-weight: 500; }
 
 .auth-copy > p {
   max-width: 460px;
   color: rgba(255, 255, 255, 0.78);
-  font-size: 15px;
-  line-height: 1.65;
+  font-size: var(--text-ui);
+  line-height: 1.6;
 }
 
 .auth-proof {
@@ -538,9 +477,9 @@ textarea:focus-visible {
 
 .auth-proof div { background: rgba(4, 28, 45, 0.62); }
 .auth-proof strong { color: #ffffff; font-size: 17px; font-weight: 600; }
-.auth-proof span { color: rgba(255, 255, 255, 0.66); font-size: 9.5px; }
+.auth-proof span { color: rgba(255, 255, 255, 0.66); font-size: var(--text-micro); }
 
-.auth-foot { color: rgba(255, 255, 255, 0.55); font-size: 10px; }
+.auth-foot { color: rgba(255, 255, 255, 0.55); font-size: var(--text-micro); }
 
 .auth-panel { background: var(--surface); padding: 40px 28px; }
 
@@ -573,7 +512,7 @@ textarea:focus-visible {
 .auth-error { border-radius: var(--radius-sm); font-size: 11.5px; }
 .auth-switch { font-size: 12px; margin-top: 22px; }
 .auth-switch button { color: var(--copper); }
-.auth-legal { font-size: 10px; }
+.auth-legal { font-size: var(--text-micro); }
 
 /* The reset screen has no brand column: keep it on the paper grey. */
 .auth-single {
@@ -624,7 +563,7 @@ textarea:focus-visible {
   margin: 6px 0 7px;
   color: var(--ink);
   font-family: var(--font-display);
-  font-size: 25px;
+  font-size: var(--text-workspace);
   font-weight: 600;
   letter-spacing: -0.025em;
   line-height: 1.2;
@@ -634,7 +573,7 @@ textarea:focus-visible {
   margin: 0;
   max-width: 600px;
   color: var(--ink-3);
-  font-size: 12.5px;
+  font-size: var(--text-data);
   line-height: 1.6;
 }
 
@@ -725,8 +664,8 @@ textarea:focus-visible {
   .module-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-@media (max-width: 900px) {
-  .module-band-title { font-size: 22px; }
+  @media (max-width: 900px) {
+  .module-band-title { font-size: var(--text-workspace); }
   .module-tiles { gap: 14px; }
 }
 
