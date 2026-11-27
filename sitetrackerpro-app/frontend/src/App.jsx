@@ -1909,23 +1909,23 @@ function compactValue(value) {
 // The module band on the overview: one tile per workspace the app actually opens.
 const OVERVIEW_MODULES = [
   {
-    screen: 'gis', icon: 'map', photo: moduleGisPhoto, title: 'Map & GIS',
+    screen: 'gis', icon: 'tile-map', photo: moduleGisPhoto, title: 'Map & GIS',
     copy: 'Basemaps, layers and georeferencing that place every record on the site.'
   },
   {
-    screen: '3d-viewer', icon: 'cube', photo: moduleBimPhoto, title: '3D BIM / IFC',
+    screen: '3d-viewer', icon: 'tile-bim', photo: moduleBimPhoto, title: '3D BIM / IFC',
     copy: 'Open IFC and DWG models beside the field records they describe.'
   },
   {
-    screen: 'surveying', icon: 'mountain', photo: moduleSurveyPhoto, title: 'Terrain & Survey',
+    screen: 'surveying', icon: 'tile-terrain', photo: moduleSurveyPhoto, title: 'Terrain & Survey',
     copy: 'Control points, total-station work and ground truth captured in the field.'
   },
   {
-    screen: 'quantity-survey', icon: 'calculator', photo: moduleCostPhoto, title: 'Cost & Quantities',
+    screen: 'quantity-survey', icon: 'tile-cost', photo: moduleCostPhoto, title: 'Cost & Quantities',
     copy: 'Quantities, takeoffs and budget control tied back to the modelled scope.'
   },
   {
-    screen: 'fraud', icon: 'shield', photo: moduleAssurancePhoto, title: 'Payment assurance',
+    screen: 'fraud', icon: 'tile-assurance', photo: moduleAssurancePhoto, title: 'Payment assurance',
     copy: 'Risk scoring that compares progress, spend and evidence before certification.'
   }
 ];
@@ -2098,7 +2098,7 @@ function DashboardScreen({ token, projects, activeProject, setSelectedProject, s
                 aria-label={`Open ${module.title}`}
               >
                 <img src={module.photo} alt={module.title} loading="lazy" />
-                <span className="module-tile-icon"><Icon name={module.icon} size={17} /></span>
+                <span className="module-tile-icon"><Icon name={module.icon} size={19} /></span>
               </button>
               <h3 className="module-tile-title">{module.title}</h3>
               <p className="module-tile-copy">{module.copy}</p>

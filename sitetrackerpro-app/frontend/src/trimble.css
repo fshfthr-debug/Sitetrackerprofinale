@@ -329,6 +329,44 @@ textarea:focus-visible {
 .cmd-breadcrumb strong { color: var(--ink); }
 .cmd-crumb-sep { color: var(--line-strong); }
 
+.cmd-tab { display: inline-flex; align-items: center; gap: 6px; }
+
+.cmd-tab svg { flex: 0 0 auto; opacity: 0.72; }
+
+.cmd-tab.active svg { opacity: 1; }
+
+.module-tile-icon svg { display: block; }
+
+/* The mark is a real vector badge now, so it fills its own frame. */
+.brand-mark.brand-mark--vector,
+.auth-brand .brand-mark.brand-mark--vector {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.brand-mark--vector svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.cmdbar-mark.cmdbar-mark--vector {
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.cmdbar-mark--vector svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+
 .cmd-tabs {
   gap: 4px;
   padding: 0;

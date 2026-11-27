@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Icon from '../ui/Icon';
+import { ReactComponent as BrandMark } from '../icons/brand-mark.svg';
 import FeatureGuidePopup from '../ui/FeatureGuidePopup';
 import { answerQuestion } from '../ai/siteAi';
 import { buildHostedContext, conversationForModel, draftFromAnswer, shouldUseHostedAi } from '../ai/hosted';
@@ -38,7 +39,7 @@ export const NAV_SECTIONS = [
     label: 'Workspace',
     items: [
       { id: 'bim-import', label: 'BIM import', icon: 'upload' },
-      { id: 'team', label: 'Team & access', icon: 'shield' },
+      { id: 'team', label: 'Team & access', icon: 'team' },
       { id: 'audit', label: 'Audit trail', icon: 'receipt' },
       { id: 'account', label: 'Account', icon: 'key' }
     ]
@@ -58,7 +59,7 @@ const SCREEN_META = {
   fraud: { label: 'Risk & fraud', section: 'Assurance', icon: 'shield' },
   materials: { label: 'Materials', section: 'Assurance', icon: 'box' },
   'bim-import': { label: 'BIM import', section: 'Workspace', icon: 'upload' },
-  team: { label: 'Team & access', section: 'Workspace', icon: 'shield' },
+  team: { label: 'Team & access', section: 'Workspace', icon: 'team' },
   audit: { label: 'Audit trail', section: 'Workspace', icon: 'receipt' },
   account: { label: 'Account', section: 'Workspace', icon: 'key' }
 };
@@ -66,8 +67,8 @@ const SCREEN_META = {
 export function Brand({ size = 40, withSub = true }) {
   return (
     <div className="brand">
-      <div className="brand-mark" style={{ width: size, height: size }}>
-        <img src="/logo-mark.png" alt="" />
+      <div className="brand-mark brand-mark--vector" style={{ width: size, height: size }}>
+        <BrandMark />
       </div>
       <div>
         <span className="brand-word">SiteTracker<span>Pro</span></span>
@@ -333,8 +334,8 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
       <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }} />
       <aside className="drawer" role="dialog" aria-modal="true" aria-label="Site AI assistant">
         <div className="drawer-head">
-          <div className="brand-mark" style={{ width: 34, height: 34, borderRadius: 10, padding: 2 }}>
-            <img src="/logo-mark.png" alt="" />
+          <div className="brand-mark brand-mark--vector" style={{ width: 34, height: 34, borderRadius: 10 }}>
+            <BrandMark />
           </div>
           <div className="drawer-head-copy">
             <h3>Site AI</h3>

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Icon from '../ui/Icon';
+import { ReactComponent as BrandMark } from '../icons/brand-mark.svg';
 import { BASEMAP_CHOICES } from '../gis/basemaps';
 import { getWorkspaceSettings, sendGisCommand, updateWorkspaceSettings } from './workspaceSettings';
 
@@ -9,11 +10,11 @@ const API_URL = process.env.REACT_APP_API_URL || '';
 // The five workspace modes requested for the command centre. Terrain opens the map with the
 // earthworks tool already active; control points opens the survey screen, where observations live.
 export const MODE_TABS = [
-  { id: 'map', label: 'Map & GIS', screen: 'gis' },
-  { id: 'bim', label: '3D BIM / IFC', screen: '3d-viewer' },
-  { id: 'terrain', label: 'Terrain & Survey', screen: 'gis', command: 'tool:cut-fill' },
-  { id: 'control', label: 'Control Points', screen: 'surveying' },
-  { id: 'reports', label: 'Reports & Team', screen: 'team' }
+  { id: 'map', label: 'Map & GIS', screen: 'gis', icon: 'tab-gis' },
+  { id: 'bim', label: '3D BIM / IFC', screen: '3d-viewer', icon: 'tab-bim' },
+  { id: 'terrain', label: 'Terrain & Survey', screen: 'gis', command: 'tool:cut-fill', icon: 'tab-terrain' },
+  { id: 'control', label: 'Control Points', screen: 'surveying', icon: 'tab-control' },
+  { id: 'reports', label: 'Reports & Team', screen: 'team', icon: 'tab-reports' }
 ];
 
 const ROLE_LABELS = { admin: 'Admin', analyst: 'Analyst', viewer: 'Viewer' };
@@ -177,7 +178,7 @@ export default function CommandBar({
             { label: 'BIM / IFC import', icon: 'cube', run: () => navigate('bim-import') }
           ]
         },
-        { label: 'Print layout', icon: 'file', hint: 'P', run: () => goGis('map:print') },
+        { label: 'Print layout', icon: 'print', hint: 'P', run: () => goGis('map:print') },
         { divider: true },
         { label: 'Account & security', icon: 'key', run: () => navigate('account') },
         { label: 'Team & access', icon: 'shield', run: () => navigate('team') }
@@ -187,10 +188,10 @@ export default function CommandBar({
       label: 'Layers',
       items: [
         { label: 'Toggle layer & asset tree', icon: 'layers', hint: 'L', run: () => goGis('panel:layers') },
-        { label: 'Attribute table', icon: 'database', run: () => goGis('panel:table') },
+        { label: 'Attribute table', icon: 'table', run: () => goGis('panel:table') },
         { label: 'Ethiopia coverage', icon: 'globe', run: () => goGis('panel:ethiopia') },
         { label: 'Survey control points', icon: 'compass', run: () => navigate('surveying') },
-        { label: 'Georeferencing', icon: 'target', run: () => goGis('panel:georef') }
+        { label: 'Georeferencing', icon: 'georef', run: () => goGis('panel:georef') }
       ]
     },
     {
@@ -198,11 +199,11 @@ export default function CommandBar({
       items: [
         { label: 'Measure distance', icon: 'ruler', hint: 'M', run: () => goGis('tool:measure-distance') },
         { label: 'Measure area', icon: 'ruler', run: () => goGis('tool:measure-area') },
-        { label: 'Buffer / clip / intersect', icon: 'layers', run: () => goGis('panel:analysis') },
+        { label: 'Buffer / clip / intersect', icon: 'buffer', run: () => goGis('panel:analysis') },
         { divider: true },
-        { label: 'Cut & fill volumes', icon: 'mountain', hint: 'C', run: () => goGis('tool:cut-fill') },
-        { label: 'Clash & encroachment', icon: 'alert', hint: 'K', run: () => goGis('tool:clash') },
-        { label: 'Slope hazards', icon: 'activity', run: () => goGis('tool:clash-slope') }
+        { label: 'Cut & fill volumes', icon: 'cutfill', hint: 'C', run: () => goGis('tool:cut-fill') },
+        { label: 'Clash & encroachment', icon: 'clash', hint: 'K', run: () => goGis('tool:clash') },
+        { label: 'Slope hazards', icon: 'slope', run: () => goGis('tool:clash-slope') }
       ]
     },
     {
@@ -298,7 +299,7 @@ export default function CommandBar({
       <div className="cmdbar-tier cmdbar-tier--title">
       <div className="cmdbar-left">
         <button type="button" className="cmdbar-brand" onClick={() => navigate('dashboard')} aria-label="SiteTrackerPro overview">
-          <span className="cmdbar-mark"><img src="/logo-mark.png" alt="" /></span>
+          <span className="cmdbar-mark cmdbar-mark--vector"><BrandMark /></span>
           <span className="cmdbar-word">SiteTracker<span>Pro</span></span>
         </button>
 
@@ -491,6 +492,7 @@ export default function CommandBar({
                 if (tab.command) window.setTimeout(() => sendGisCommand(tab.command), 0);
               }}
             >
+              <Icon name={tab.icon} size={13} />
               {tab.label}
             </button>
           ))}

@@ -6,12 +6,12 @@ import Icon from '../ui/Icon';
 // earthworks, georeference. A hairline divider renders wherever the group changes.
 export const MAP_TOOLS = [
   { id: 'select', group: 'navigate', label: 'Select / Inspect', icon: 'cursor', key: 'V', hint: 'Click a feature to inspect it' },
-  { id: 'pan', group: 'navigate', label: 'Pan', icon: 'locate', key: 'H', hint: 'Drag to pan the map' },
+  { id: 'pan', group: 'navigate', label: 'Pan', icon: 'pan', key: 'H', hint: 'Drag to pan the map' },
   { id: 'measure', group: 'measure', label: 'Measure Distance / Area', icon: 'ruler', key: 'M', hint: 'Click to add points, double-click to finish' },
   { id: 'draw', group: 'measure', label: 'Draw Polygon / Point', icon: 'pen', key: 'D', hint: 'Click vertices, double-click to close the polygon' },
-  { id: 'cut-fill', group: 'earthworks', label: 'Cut / Fill Volume', icon: 'mountain', key: 'C', hint: 'Draw a polygon and compute volumes against a DEM' },
-  { id: 'clash', group: 'earthworks', label: 'Clash Check', icon: 'target', key: 'K', hint: 'Check clearance between layers or slope hazards' },
-  { id: 'georef', group: 'georeference', label: 'Georeference', icon: 'globe', key: 'G', hint: 'Fit a raster or drawing to survey control' }
+  { id: 'cut-fill', group: 'earthworks', label: 'Cut / Fill Volume', icon: 'cutfill', key: 'C', hint: 'Draw a polygon and compute volumes against a DEM' },
+  { id: 'clash', group: 'earthworks', label: 'Clash Check', icon: 'clash', key: 'K', hint: 'Check clearance between layers or slope hazards' },
+  { id: 'georef', group: 'georeference', label: 'Georeference', icon: 'georef', key: 'G', hint: 'Fit a raster or drawing to survey control' }
 ];
 
 export function ToolDock({ activeTool, onTool, collapsed = false }) {
