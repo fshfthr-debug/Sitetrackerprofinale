@@ -5,33 +5,33 @@ import AlignmentPreviewMap from './AlignmentPreviewMap';
 const API_URL = process.env.REACT_APP_API_URL || '';
 
 const styles = {
-  card: { background: '#fff', border: '1px solid #e3e9ef', borderRadius: '8px', padding: '14px', marginTop: '12px' },
+  card: { background: 'var(--surface)', border: '1px solid var(--line)', borderRadius: '8px', padding: '14px', marginTop: '12px' },
   input: {
-    padding: '6px 8px', border: '1px solid #d5dde5', borderRadius: '5px',
-    fontSize: '13px', background: '#fff', color: '#26313c', minWidth: 0
+    padding: '6px 8px', border: '1px solid var(--line-strong)', borderRadius: '5px',
+    fontSize: '13px', background: 'var(--surface)', color: 'var(--ink)', minWidth: 0
   },
   button: {
     background: '#d9480f', color: '#fff', border: 'none', borderRadius: '5px',
     padding: '7px 12px', cursor: 'pointer', fontSize: '13px'
   },
   buttonSmall: {
-    background: '#f1f4f7', color: '#26313c', border: '1px solid #dfe6ec',
+    background: 'var(--surface-2)', color: 'var(--ink)', border: '1px solid var(--line)',
     borderRadius: '4px', padding: '4px 7px', cursor: 'pointer', fontSize: '12px'
   },
-  helper: { margin: '4px 0', color: '#5b6773', fontSize: '12px', lineHeight: 1.45 },
-  label: { display: 'block', color: '#5b6773', fontSize: '11px', margin: '6px 0 2px' },
+  helper: { margin: '4px 0', color: 'var(--ink-3)', fontSize: '12px', lineHeight: 1.45 },
+  label: { display: 'block', color: 'var(--ink-3)', fontSize: '11px', margin: '6px 0 2px' },
   summary: { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: '6px', margin: '8px 0' },
-  metric: { background: '#f5f8fb', border: '1px solid #e3e9ef', borderRadius: '6px', padding: '7px 8px' },
-  metricValue: { fontSize: '16px', fontWeight: 700, color: '#26313c' },
-  metricLabel: { fontSize: '10px', color: '#5b6773', textTransform: 'uppercase', letterSpacing: '0.03em' },
+  metric: { background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: '6px', padding: '7px 8px' },
+  metricValue: { fontSize: '16px', fontWeight: 700, color: 'var(--ink)' },
+  metricLabel: { fontSize: '10px', color: 'var(--ink-3)', textTransform: 'uppercase', letterSpacing: '0.03em' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: '11px' },
-  th: { textAlign: 'left', padding: '4px 3px', borderBottom: '1px solid #dfe6ec', color: '#5b6773', fontWeight: 600 },
-  td: { padding: '4px 3px', borderBottom: '1px solid #f0f3f6', verticalAlign: 'top' },
-  warning: { background: '#fff8e6', border: '1px solid #f0d18a', color: '#6b4b00', padding: '7px 9px', borderRadius: '5px', fontSize: '12px', margin: '5px 0' },
+  th: { textAlign: 'left', padding: '4px 3px', borderBottom: '1px solid var(--line)', color: 'var(--ink-3)', fontWeight: 600 },
+  td: { padding: '4px 3px', borderBottom: '1px solid var(--line)', verticalAlign: 'top' },
+  warning: { background: 'var(--surface-2)', border: '1px solid var(--line-strong)', color: 'var(--ink-2)', padding: '7px 9px', borderRadius: '5px', fontSize: '12px', margin: '5px 0' },
   success: { background: '#eef7ee', border: '1px solid #b7d9b7', color: '#235b2c', padding: '7px 9px', borderRadius: '5px', fontSize: '12px', margin: '5px 0' },
-  error: { background: '#fff3f0', border: '1px solid #f3b7a6', color: '#8a2b12', padding: '7px 9px', borderRadius: '5px', fontSize: '12px', margin: '5px 0' },
+  error: { background: 'var(--danger-soft)', border: '1px solid var(--danger-soft)', color: 'var(--danger)', padding: '7px 9px', borderRadius: '5px', fontSize: '12px', margin: '5px 0' },
   row: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px' },
-  fitRow: { display: 'flex', justifyContent: 'space-between', gap: '6px', fontSize: '12px', padding: '3px 0', borderBottom: '1px solid #f0f3f6' }
+  fitRow: { display: 'flex', justifyContent: 'space-between', gap: '6px', fontSize: '12px', padding: '3px 0', borderBottom: '1px solid var(--line)' }
 };
 
 const valueOrNull = value => (value === '' || value === null || value === undefined ? null : Number(value));
@@ -434,19 +434,19 @@ export default function Georeferencing({
             <div style={styles.fitRow}><span>Pair check</span><strong>{preview.pairCount} pairs · max {show(preview.maxResidual, 4)} m</strong></div>
 
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', margin: '8px 0' }}>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#5b6773' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--ink-3)' }}>
                 <span style={{ width: 18, borderTop: '2px dashed #b54708' }} /> model boundary
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#5b6773' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--ink-3)' }}>
                 <span style={{ width: 12, height: 9, background: 'rgba(240,140,0,0.36)', border: '1px solid #b54708' }} /> sample building
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#5b6773' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--ink-3)' }}>
                 <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#0b7285' }} /> survey point
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#5b6773' }}>
-                <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#fff', border: '2px solid #d9480f', boxSizing: 'border-box' }} /> model point after fit
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--ink-3)' }}>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: 'var(--surface)', border: '2px solid #d9480f', boxSizing: 'border-box' }} /> model point after fit
               </span>
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#5b6773' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: 'var(--ink-3)' }}>
                 <span style={{ width: 18, borderTop: '2px solid #2b8a3e' }} /> residual ≤ 5 cm
               </span>
             </div>
@@ -592,7 +592,7 @@ export default function Georeferencing({
                       <button
                         id={`alignment-delete-${item.id}`}
                         onClick={() => removePair(item.id)}
-                        style={{ ...styles.buttonSmall, color: '#8a2b12' }}
+                        style={{ ...styles.buttonSmall, color: 'var(--danger)' }}
                         aria-label={`Remove alignment pair for ${item.pointName}`}
                       >
                         Remove
@@ -605,7 +605,7 @@ export default function Georeferencing({
           </div>
         )}
 
-        <div style={{ marginTop: '10px', borderTop: '1px solid #eee', paddingTop: '9px' }}>
+        <div style={{ marginTop: '10px', borderTop: '1px solid var(--line)', paddingTop: '9px' }}>
           <button
             id="alignment-fit"
             onClick={runFit}

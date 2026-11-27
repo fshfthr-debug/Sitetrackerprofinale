@@ -2105,7 +2105,7 @@ export default function GisWorkspace({ token, projects }) {
                   </p>
                 )}
 
-                <div style={{ borderTop: '1px solid #eee', marginTop: '10px', paddingTop: '10px' }}>
+                <div style={{ borderTop: '1px solid var(--line)', marginTop: '10px', paddingTop: '10px' }}>
                   <label style={styles.helper}>New workspace</label>
                   <div style={{ display: 'flex', gap: '6px' }}>
                     <input
@@ -2173,7 +2173,7 @@ export default function GisWorkspace({ token, projects }) {
                     <option key={item.code} value={item.code}>{item.code} — {item.name}</option>
                   ))}
                 </select>
-                <div style={{ background: '#f7f9fb', border: '1px solid #e3e9ef', borderRadius: '6px', padding: '8px', marginTop: '8px', fontFamily: 'Consolas, monospace', fontSize: '12px' }}>
+                <div style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: '6px', padding: '8px', marginTop: '8px', fontFamily: 'Consolas, monospace', fontSize: '12px' }}>
                   {cursor ? (
                     <>
                       <div>WGS 84: {cursor.lat.toFixed(6)}, {cursor.lng.toFixed(6)}</div>
@@ -2195,7 +2195,7 @@ export default function GisWorkspace({ token, projects }) {
                     <span style={{ fontFamily: 'Calibri' }}>Move the pointer over the map to read coordinates.</span>
                   )}
                 </div>
-                <div style={{ borderTop: '1px solid #eee', marginTop: '10px', paddingTop: '10px' }}>
+                <div style={{ borderTop: '1px solid var(--line)', marginTop: '10px', paddingTop: '10px' }}>
                   <label style={styles.helper}>Reproject a dataset (in place)</label>
                   {datasets.length === 0 ? (
                     <p style={styles.helper}>No datasets to reproject.</p>
@@ -2256,7 +2256,7 @@ export default function GisWorkspace({ token, projects }) {
                       <span style={styles.badge}>{layer.kind}</span>
                     </div>
                     {payloads[layer.id]?.error && (
-                      <p style={{ ...styles.helper, color: '#8a2b12' }}>⚠️ {payloads[layer.id].error}</p>
+                      <p style={{ ...styles.helper, color: 'var(--danger)' }}>⚠️ {payloads[layer.id].error}</p>
                     )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '5px' }}>
                       <input
@@ -2280,10 +2280,10 @@ export default function GisWorkspace({ token, projects }) {
                     {styleLayerId === String(layer.id) && layer.kind !== 'terrain' && (
                       <div
                         id={`layer-style-panel-${layer.id}`}
-                        style={{ background: '#f7f9fb', border: '1px solid #e3e9ef', borderRadius: '6px', padding: '8px', marginTop: '6px' }}
+                        style={{ background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: '6px', padding: '8px', marginTop: '6px' }}
                       >
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 10px' }}>
-                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--ink-2)' }}>
                             Colour
                             <div style={{ display: 'flex', gap: '5px', alignItems: 'center', marginTop: '3px' }}>
                               <input
@@ -2291,12 +2291,12 @@ export default function GisWorkspace({ token, projects }) {
                                 type="color"
                                 value={/^#[0-9a-f]{6}$/i.test(layer.style?.color || '') ? layer.style.color : (layer.kind === 'survey' ? '#0b7285' : '#d9480f')}
                                 onChange={event => setLayerStyle(layer, { color: event.target.value })}
-                                style={{ width: '42px', height: '26px', padding: 0, border: '1px solid #ccd6df', borderRadius: '3px' }}
+                                style={{ width: '42px', height: '26px', padding: 0, border: '1px solid var(--line-strong)', borderRadius: '3px' }}
                               />
                               <code style={{ fontSize: '10px' }}>{layer.style?.color || 'default'}</code>
                             </div>
                           </label>
-                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--ink-2)' }}>
                             Line width · {Number(layer.style?.lineWidth ?? 2)}px
                             <input
                               id={`layer-linewidth-${layer.id}`}
@@ -2306,7 +2306,7 @@ export default function GisWorkspace({ token, projects }) {
                               style={{ display: 'block', width: '100%' }}
                             />
                           </label>
-                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--ink-2)' }}>
                             Fill opacity · {Math.round(Number(layer.style?.fillOpacity ?? 0.28) * 100)}%
                             <input
                               id={`layer-fill-${layer.id}`}
@@ -2316,7 +2316,7 @@ export default function GisWorkspace({ token, projects }) {
                               style={{ display: 'block', width: '100%' }}
                             />
                           </label>
-                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--ink-2)' }}>
                             Point size · {Number(layer.style?.pointSize ?? 5)}px
                             <input
                               id={`layer-pointsize-${layer.id}`}
@@ -2327,8 +2327,8 @@ export default function GisWorkspace({ token, projects }) {
                             />
                           </label>
                         </div>
-                        <div style={{ borderTop: '1px solid #dfe6ec', marginTop: '8px', paddingTop: '8px' }}>
-                          <label style={{ fontSize: '11px', color: '#425466' }}>
+                        <div style={{ borderTop: '1px solid var(--line)', marginTop: '8px', paddingTop: '8px' }}>
+                          <label style={{ fontSize: '11px', color: 'var(--ink-2)' }}>
                             Label field
                             <select
                               id={`layer-label-field-${layer.id}`}
@@ -2337,7 +2337,7 @@ export default function GisWorkspace({ token, projects }) {
                                 labelField: event.target.value,
                                 labelsVisible: Boolean(event.target.value)
                               })}
-                              style={{ display: 'block', width: '100%', padding: '5px 6px', marginTop: '3px', border: '1px solid #ccd6df', borderRadius: '4px', fontSize: '12px' }}
+                              style={{ display: 'block', width: '100%', padding: '5px 6px', marginTop: '3px', border: '1px solid var(--line-strong)', borderRadius: '4px', fontSize: '12px' }}
                             >
                               <option value="">No labels</option>
                               {Array.from(new Set([...(labelFieldsByLayer[layer.id] || []), ...(layer.style?.labelField ? [layer.style.labelField] : [])])).map(field => (
@@ -2346,7 +2346,7 @@ export default function GisWorkspace({ token, projects }) {
                             </select>
                           </label>
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center', marginTop: '6px' }}>
-                            <label style={{ fontSize: '11px', color: '#425466', display: 'flex', gap: '4px', alignItems: 'center' }}>
+                            <label style={{ fontSize: '11px', color: 'var(--ink-2)', display: 'flex', gap: '4px', alignItems: 'center' }}>
                               <input
                                 id={`layer-labels-visible-${layer.id}`}
                                 type="checkbox"
@@ -2356,21 +2356,21 @@ export default function GisWorkspace({ token, projects }) {
                               />
                               Show labels
                             </label>
-                            <label style={{ fontSize: '11px', color: '#425466' }}>
+                            <label style={{ fontSize: '11px', color: 'var(--ink-2)' }}>
                               Placement
                               <select
                                 id={`layer-label-placement-${layer.id}`}
                                 value={layer.style?.labelPlacement || 'center'}
                                 disabled={!layer.style?.labelField}
                                 onChange={event => setLayerStyle(layer, { labelPlacement: event.target.value })}
-                                style={{ marginLeft: '4px', padding: '3px 5px', border: '1px solid #ccd6df', borderRadius: '4px', fontSize: '11px' }}
+                                style={{ marginLeft: '4px', padding: '3px 5px', border: '1px solid var(--line-strong)', borderRadius: '4px', fontSize: '11px' }}
                               >
                                 <option value="above">Above</option>
                                 <option value="center">Center</option>
                                 <option value="below">Below</option>
                               </select>
                             </label>
-                            <label style={{ fontSize: '11px', color: '#425466' }}>
+                            <label style={{ fontSize: '11px', color: 'var(--ink-2)' }}>
                               Size · {Number(layer.style?.labelSize ?? 12)}px
                               <input
                                 id={`layer-label-size-${layer.id}`}
@@ -2382,12 +2382,12 @@ export default function GisWorkspace({ token, projects }) {
                               />
                             </label>
                           </div>
-                          <p style={{ fontSize: '10px', color: '#5b6773', margin: '5px 0 0' }}>
+                          <p style={{ fontSize: '10px', color: 'var(--ink-3)', margin: '5px 0 0' }}>
                             Up to 400 labels are drawn on screen. Labels and annotations are screen overlays and are not included in the raster print capture.
                           </p>
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', alignItems: 'center', marginTop: '7px' }}>
-                          <span style={{ fontSize: '10px', color: '#5b6773' }}>
+                          <span style={{ fontSize: '10px', color: 'var(--ink-3)' }}>
                             {layer.kind === 'survey' ? 'Benchmarks stay red; colour applies to control points.' : 'Saved to the layer style.'}
                           </span>
                           <button id={`layer-reset-${layer.id}`} onClick={() => resetLayerStyle(layer)} style={styles.buttonSmall}>Reset</button>
@@ -2432,7 +2432,7 @@ export default function GisWorkspace({ token, projects }) {
                             >
                               Shapefile
                             </button>
-                            <span style={{ fontSize: '11px', color: '#5b6773' }}>
+                            <span style={{ fontSize: '11px', color: 'var(--ink-3)' }}>
                               stored {payloads[layer.id]?.meta?.crs || '—'}
                             </span>
                           </>
@@ -2463,7 +2463,7 @@ export default function GisWorkspace({ token, projects }) {
                     value={annotationColour}
                     onChange={event => setAnnotationColour(event.target.value)}
                     title="Annotation colour"
-                    style={{ width: '38px', height: '28px', padding: 0, border: '1px solid #ccd6df', borderRadius: '4px' }}
+                    style={{ width: '38px', height: '28px', padding: 0, border: '1px solid var(--line-strong)', borderRadius: '4px' }}
                   />
                   <button
                     id="gis-annotation-place"
@@ -2483,7 +2483,7 @@ export default function GisWorkspace({ token, projects }) {
                   )}
                 </div>
                 {annotations.length > 0 && (
-                  <div style={{ marginTop: '9px', maxHeight: '190px', overflow: 'auto', borderTop: '1px solid #eee', paddingTop: '6px' }}>
+                  <div style={{ marginTop: '9px', maxHeight: '190px', overflow: 'auto', borderTop: '1px solid var(--line)', paddingTop: '6px' }}>
                     {annotations.map(annotation => (
                       <div key={annotation.id} style={{ display: 'flex', gap: '6px', alignItems: 'center', padding: '4px 0', borderBottom: '1px solid #f2f4f6' }}>
                         <span style={{ width: '9px', height: '9px', borderRadius: '50%', background: annotation.color, flex: '0 0 auto' }} />
@@ -2542,7 +2542,7 @@ export default function GisWorkspace({ token, projects }) {
                   </div>
                 )}
 
-                <div style={{ borderTop: '1px solid #eee', marginTop: '12px', paddingTop: '10px' }}>
+                <div style={{ borderTop: '1px solid var(--line)', marginTop: '12px', paddingTop: '10px' }}>
                   <label style={styles.helper}>Import dataset (GeoJSON, CSV, KML, Shapefile, DXF or DWG)</label>
                   <input
                     id="gis-import-file"
@@ -2583,14 +2583,14 @@ export default function GisWorkspace({ token, projects }) {
                   </p>
                 </div>
 
-                <div style={{ borderTop: '1px solid #eee', marginTop: '12px', paddingTop: '10px' }}>
+                <div style={{ borderTop: '1px solid var(--line)', marginTop: '12px', paddingTop: '10px' }}>
                   <label style={styles.helper}>Survey control points ({surveyCount})</label>
                   <button onClick={() => addLayer({ kind: 'survey', name: 'Survey control points' })} style={styles.button}>
                     Add survey points
                   </button>
                 </div>
 
-                <div style={{ borderTop: '1px solid #eee', marginTop: '12px', paddingTop: '10px' }}>
+                <div style={{ borderTop: '1px solid var(--line)', marginTop: '12px', paddingTop: '10px' }}>
                   <label style={styles.helper}>DEM hillshade (preview-derived)</label>
                   {readyTerrains.length === 0 ? (
                     <p style={styles.helper}>No processed DEM for this project. Upload one in the 3D viewer's terrain card.</p>
@@ -2723,7 +2723,7 @@ export default function GisWorkspace({ token, projects }) {
                 </button>
 
                 {analysisResult && (
-                  <div style={{ marginTop: '10px', background: '#f7f9fb', border: '1px solid #e3e9ef', borderRadius: '6px', padding: '9px', fontSize: '12px' }}>
+                  <div style={{ marginTop: '10px', background: 'var(--surface-2)', border: '1px solid var(--line)', borderRadius: '6px', padding: '9px', fontSize: '12px' }}>
                     <strong>{analysisResult.operation}</strong> completed in {analysisResult.computationCrs}
                     <div>{analysisResult.outputFeatureCount} feature(s) · saved as {analysisResult.dataset.name} ({analysisResult.dataset.crs})</div>
                     {analysisResult.metrics && (
@@ -2737,7 +2737,7 @@ export default function GisWorkspace({ token, projects }) {
                         {analysisResult.metrics.features.length > 0 && (
                           <table style={{ width: '100%', marginTop: '6px', borderCollapse: 'collapse' }}>
                             <thead>
-                              <tr style={{ color: '#5b6773' }}>
+                              <tr style={{ color: 'var(--ink-3)' }}>
                                 <th style={{ textAlign: 'left', padding: '2px' }}>Feature</th>
                                 <th style={{ textAlign: 'right', padding: '2px' }}>Area m²</th>
                                 <th style={{ textAlign: 'right', padding: '2px' }}>Length m</th>
@@ -2915,16 +2915,16 @@ export default function GisWorkspace({ token, projects }) {
                   </>
                 )}
               </div>
-              <div style={{ maxHeight: '300px', overflow: 'auto', border: '1px solid #e3e9ef', borderRadius: '6px' }}>
+              <div style={{ maxHeight: '300px', overflow: 'auto', border: '1px solid var(--line)', borderRadius: '6px' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
                   <thead>
                     <tr>
-                      <th style={{ position: 'sticky', top: 0, background: '#f3f6f9', textAlign: 'left', padding: '6px', borderBottom: '1px solid #dfe6ec' }}>#</th>
+                      <th style={{ position: 'sticky', top: 0, background: 'var(--surface-3)', textAlign: 'left', padding: '6px', borderBottom: '1px solid var(--line)' }}>#</th>
                       {table.columns.map(column => (
                         <th
                           key={column}
                           onClick={() => toggleTableSort(column)}
-                          style={{ position: 'sticky', top: 0, background: '#f3f6f9', textAlign: 'left', padding: '6px', borderBottom: '1px solid #dfe6ec', cursor: 'pointer', whiteSpace: 'nowrap' }}
+                          style={{ position: 'sticky', top: 0, background: 'var(--surface-3)', textAlign: 'left', padding: '6px', borderBottom: '1px solid var(--line)', cursor: 'pointer', whiteSpace: 'nowrap' }}
                         >
                           {column}{tableSort.key === column ? (tableSort.direction === 'asc' ? ' ▲' : ' ▼') : ''}
                         </th>
@@ -2936,9 +2936,9 @@ export default function GisWorkspace({ token, projects }) {
                       <tr
                         key={row.index}
                         onClick={() => focusTableRow(tableLayer, row)}
-                        style={{ cursor: 'pointer', borderBottom: '1px solid #f0f3f6' }}
+                        style={{ cursor: 'pointer', borderBottom: '1px solid var(--line)' }}
                       >
-                        <td style={{ padding: '5px 6px', color: '#8190a0' }}>{row.index + 1}</td>
+                        <td style={{ padding: '5px 6px', color: 'var(--ink-3)' }}>{row.index + 1}</td>
                         {table.columns.map(column => (
                           <td key={column} style={{ padding: '5px 6px', whiteSpace: 'nowrap', maxWidth: '260px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                             {row.properties[column] === undefined || row.properties[column] === null ? '' : String(row.properties[column])}
@@ -2948,7 +2948,7 @@ export default function GisWorkspace({ token, projects }) {
                     ))}
                     {table.rows.length === 0 && (
                       <tr>
-                        <td colSpan={table.columns.length + 1} style={{ padding: '12px', color: '#5b6773' }}>
+                        <td colSpan={table.columns.length + 1} style={{ padding: '12px', color: 'var(--ink-3)' }}>
                           No feature matches the filter.
                         </td>
                       </tr>
