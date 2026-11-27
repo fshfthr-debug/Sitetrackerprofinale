@@ -33,7 +33,9 @@
 /* ------------------------------------------------------------- command bar */
 
 .cmdbar {
-  position: fixed; inset: 0 0 auto 0; z-index: 80;
+  /* Its own stacking layer, above every canvas, glass panel and map control, so an open menu
+     is never clipped by or painted under the search field and toolbar it overlaps. */
+  position: fixed; inset: 0 0 auto 0; z-index: 400;
   display: flex; flex-direction: column; padding: 0;
   background:
     radial-gradient(600px 120px at 0% 0%, rgba(0, 99, 163, 0.16), transparent 70%),
@@ -185,13 +187,17 @@
 .cmd-menu-trigger:hover, .cmd-menu-trigger.open { background: rgba(255, 255, 255, 0.09); color: #fff; }
 
 .cmd-menu {
-  /* Above every WebGL canvas, glass dock and dialog in the app (canvases sit at 20-40). */
-  position: absolute; top: calc(100% + 4px); left: 0; z-index: 9999; min-width: var(--ui-menu-min-w);
+  /* In the command bar's layer (400), above every WebGL canvas, glass dock and dialog. */
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 420; min-width: var(--ui-menu-min-w);
   padding: 4px; border-radius: var(--ui-menu-radius); background: #ffffff;
   border: 1px solid var(--line-strong); color: var(--ink);
   box-shadow: 0 10px 28px rgba(10, 14, 12, 0.22), 0 1px 2px rgba(10, 14, 12, 0.12);
 }
-.cmd-menubar-menu { top: calc(100% + 3px); }
+.cmd-menubar-menu {
+  top: calc(100% + 3px);
+  /* A long menu scrolls inside the viewport instead of running into the map chrome. */
+  max-height: calc(100vh - var(--cmdhead-h) - 12px); overflow-y: auto;
+}
 .cmd-basemap-menu { right: 0; left: auto; min-width: 200px; }
 .cmd-profile-menu { right: 0; left: auto; min-width: 210px; top: calc(100% + 8px); }
 .cmd-menu-row { position: relative; }
@@ -221,7 +227,7 @@
 .cmd-submenu {
   position: absolute; left: calc(100% + 3px); top: -4px; min-width: var(--ui-menu-min-w); padding: 4px;
   border-radius: var(--ui-menu-radius); background: #ffffff; border: 1px solid var(--line-strong);
-  box-shadow: 0 10px 28px rgba(10, 14, 12, 0.22), 0 1px 2px rgba(10, 14, 12, 0.12); z-index: 10000;
+  box-shadow: 0 10px 28px rgba(10, 14, 12, 0.22), 0 1px 2px rgba(10, 14, 12, 0.12); z-index: 430;
 }
 /* A submenu opened near the right edge flips inward instead of running off-screen. */
 .cmd-submenu.flip { left: auto; right: calc(100% + 3px); }
@@ -238,27 +244,55 @@
   position: relative; height: calc(100vh - var(--cmdhead-h)); display: flex;
   flex-direction: column; overflow: hidden; background: #0a0f10; font-family: var(--font-sans);
 }
-.gis-studio-bar {
-  flex: none; height: 38px; display: flex; align-items: center; gap: 10px;
-  padding: 0 12px 0 calc(var(--dock-w) + 18px); background: #121917;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07); color: #c7d1cc; z-index: 26; overflow: hidden;
+/* View actions float in the canvas: the toolbar strip that used to hold them is gone. */
+.map-hud {
+  position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 27;
+  display: flex; align-items: center; gap: 2px; padding: 3px;
+  border-radius: 9px; border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(17, 23, 21, 0.82);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
 }
-.studio-project { display: flex; align-items: center; gap: 6px; flex: none; }
-.studio-project label { font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase; color: #8b9892; }
-.studio-project select {
-  background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px; color: #e7eeea; font-size: 10.5px; padding: 4px 6px; max-width: 200px; outline: none;
-}
-.studio-project select option { color: #1a1d19; }
-.studio-context { font-size: 10px; color: #8b9892; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.studio-spacer { flex: 1; }
-.studio-btn {
+.map-hud-btn {
   display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px;
-  border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.04);
-  color: #c7d1cc; font-size: 10px; cursor: pointer; white-space: nowrap;
+  border: 1px solid transparent; border-radius: 6px; background: transparent;
+  color: #c7d1cc; font-family: var(--font-sans); font-size: 10px; cursor: pointer; white-space: nowrap;
 }
-.studio-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
-.studio-btn.active { border-color: rgba(0, 99, 163, 0.55); color: var(--copper-soft); background: rgba(0, 99, 163, 0.18); }
+.map-hud-btn:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.map-hud-btn:disabled { opacity: 0.6; cursor: default; }
+.map-hud-btn.active { border-color: rgba(0, 99, 163, 0.55); background: rgba(0, 99, 163, 0.18); color: var(--copper-soft); }
+
+/* Drawer handles. The panels translate off-canvas, so the way back has to stay on the map. */
+.drawer-tab {
+  position: absolute; z-index: 27; display: inline-flex; align-items: center; gap: 5px;
+  height: 28px; padding: 0 10px; border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.12); background: rgba(17, 23, 21, 0.82);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  color: #c7d1cc; font-family: var(--font-sans); font-size: 10px; cursor: pointer;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+}
+.drawer-tab:hover { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.drawer-tab.left { left: 12px; bottom: 84px; }
+.drawer-tab.right { right: 12px; bottom: 84px; }
+
+html[data-gis-theme='light'] .map-hud,
+html[data-gis-theme='light'] .drawer-tab {
+  background: rgba(255, 253, 249, 0.94); border-color: var(--line-strong);
+  box-shadow: 0 10px 24px rgba(10, 24, 38, 0.14);
+}
+html[data-gis-theme='light'] .map-hud-btn,
+html[data-gis-theme='light'] .drawer-tab { color: var(--ink-2); }
+html[data-gis-theme='light'] .map-hud-btn:hover,
+html[data-gis-theme='light'] .drawer-tab:hover { background: var(--surface-3); color: var(--ink); }
+html[data-gis-theme='light'] .map-hud-btn.active {
+  border-color: rgba(0, 99, 163, 0.4); background: rgba(0, 99, 163, 0.1); color: #0b5d8f;
+}
+
+@media (max-width: 900px) {
+  .map-hud { left: auto; right: 10px; transform: none; }
+  .drawer-tab.left { left: 8px; bottom: 76px; }
+  .drawer-tab.right { right: 8px; bottom: 76px; }
+}
 
 .gis-stage { position: relative; flex: 1; min-height: 0; overflow: hidden; }
 .gis-map-column { position: absolute; inset: 0; }
@@ -399,7 +433,6 @@
 .gis-studio .map-search-result { color: #dfe7e2; }
 .gis-studio .map-search-result span { color: #8b9892; }
 .gis-studio .map-geolocate { background: rgba(17, 23, 21, 0.82); border-color: rgba(255, 255, 255, 0.14); color: #e7eeea; }
-.gis-stage:has(.gis-rail.collapsed) ~ .gis-studio-bar + .gis-stage .map-top { left: calc(var(--dock-w) + 24px); }
 .gis-stage:has(.gis-rail.collapsed) .map-top { left: calc(var(--dock-w) + 24px); }
 
 /* --------------------------------------------------------------- tool dock */

@@ -7,14 +7,16 @@ import { getWorkspaceSettings, sendGisCommand, updateWorkspaceSettings } from '.
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-// The five workspace modes requested for the command centre. Terrain opens the map with the
-// earthworks tool already active; control points opens the survey screen, where observations live.
+// The six platform modules, in the order they are used: Overview, map, terrain, the model,
+// commercial, then payment. The ribbon is the module navigation, so this array is the only
+// place the order is defined; each tab keeps its existing route and command.
 export const MODE_TABS = [
+  { id: 'overview', label: 'Overview', screen: 'dashboard', icon: 'overview' },
   { id: 'map', label: 'Map & GIS', screen: 'gis', icon: 'tab-gis' },
-  { id: 'bim', label: '3D BIM / IFC', screen: '3d-viewer', icon: 'tab-bim' },
   { id: 'terrain', label: 'Terrain & Survey', screen: 'gis', command: 'tool:cut-fill', icon: 'tab-terrain' },
-  { id: 'control', label: 'Control Points', screen: 'surveying', icon: 'tab-control' },
-  { id: 'reports', label: 'Reports & Team', screen: 'team', icon: 'tab-reports' }
+  { id: 'bim', label: '3D BIM / IFC', screen: '3d-viewer', icon: 'tab-bim' },
+  { id: 'cost', label: 'Cost & BOQ', screen: 'quantity-survey', icon: 'clipboard' },
+  { id: 'payment', label: 'Payment Assurance', screen: 'project-dashboard', icon: 'shield' }
 ];
 
 const ROLE_LABELS = { admin: 'Admin', analyst: 'Analyst', viewer: 'Viewer' };
@@ -264,6 +266,11 @@ export default function CommandBar({
   // Tier 2 is the contextual ribbon: the same 40px strip swaps its actions with the active mode,
   // the way ArcGIS Pro's ribbon tabs and AutoCAD Web's contextual panels do.
   const ribbonActions = {
+    overview: [
+      { label: 'New project', icon: 'plus', run: () => navigate('new-project') },
+      { label: 'Projects', icon: 'projects', run: () => navigate('projects') },
+      { label: 'Progress', icon: 'chart', run: () => navigate('project-dashboard') }
+    ],
     map: [
       { label: 'Fit', icon: 'maximize', run: () => goGis('map:fit') },
       { label: 'Layers', icon: 'layers', run: () => goGis('panel:layers') },
@@ -287,10 +294,19 @@ export default function CommandBar({
       { label: 'Control points', icon: 'compass', run: () => navigate('surveying') },
       { label: 'Fit on map', icon: 'maximize', run: () => goGis('map:fit') }
     ],
-    reports: [
-      { label: 'Progress', icon: 'chart', run: () => navigate('project-dashboard') },
+    control: [
+      { label: 'Control points', icon: 'compass', run: () => navigate('surveying') },
+      { label: 'Fit on map', icon: 'maximize', run: () => goGis('map:fit') }
+    ],
+    cost: [
+      { label: 'Quantity survey', icon: 'clipboard', run: () => navigate('quantity-survey') },
+      { label: 'Materials', icon: 'box', run: () => navigate('materials') },
+      { label: 'Export DXF', icon: 'download', run: () => goGis('export:dxf') }
+    ],
+    payment: [
+      { label: 'Progress report', icon: 'chart', run: () => navigate('project-dashboard') },
       { label: 'Risk register', icon: 'shield', run: () => navigate('fraud') },
-      { label: 'Team', icon: 'shield', run: () => navigate('team') }
+      { label: 'Audit trail', icon: 'receipt', run: () => navigate('audit') }
     ]
   }[activeTab] || [];
 

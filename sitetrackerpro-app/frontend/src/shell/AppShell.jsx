@@ -463,10 +463,12 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
 }
 
 const TAB_FOR_SCREEN = {
+  dashboard: 'overview',
   gis: 'map',
   '3d-viewer': 'bim',
-  surveying: 'control',
-  team: 'reports'
+  surveying: 'terrain',
+  'quantity-survey': 'cost',
+  'project-dashboard': 'payment'
 };
 
 export default function AppShell({

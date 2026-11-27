@@ -151,8 +151,8 @@ export default function SiteTrackerPro() {
       {currentScreen === 'quantity-survey' && <QuantitySurveyScreen token={token} projects={projects} />}
       {currentScreen === 'project-dashboard' && <ProjectDashboardScreen token={token} projects={projects} setCurrentScreen={setCurrentScreen} setSelectedProject={setSelectedProject} />}
       {currentScreen === 'surveying' && <SurveyingControlPointsScreen token={token} projects={projects} />}
-      {currentScreen === '3d-viewer' && <ThreeDViewerScreen token={token} projects={projects} />}
-      {currentScreen === 'gis' && <GisWorkspace token={token} projects={projects} />}
+      {currentScreen === '3d-viewer' && <ThreeDViewerScreen token={token} projects={projects} activeProject={activeProject} />}
+      {currentScreen === 'gis' && <GisWorkspace token={token} projects={projects} activeProject={activeProject} />}
       {currentScreen === 'materials' && <MaterialsDatabaseScreen token={token} projects={projects} />}
       {currentScreen === 'fraud' && <FraudDetectionScreen token={token} projects={projects} />}
       {currentScreen === 'team' && <TeamScreen token={token} />}
@@ -4735,7 +4735,7 @@ function ChartViewerScreen({ token, projects, embedded = false }) {
 }
 
 // ===================== 3D VIEWER (BIM model or take-off chart) =====================
-function ThreeDViewerScreen({ token, projects }) {
+function ThreeDViewerScreen({ token, projects, activeProject }) {
   const [view, setView] = useState('bim');
 
   return (
@@ -4782,7 +4782,7 @@ function ThreeDViewerScreen({ token, projects }) {
             <p>Preparing the IFC geometry engine. The first load downloads the WebAssembly module.</p>
           </div>
         }>
-          <BimViewer token={token} projects={projects} />
+          <BimViewer token={token} projects={projects} activeProject={activeProject} />
         </React.Suspense>
       ) : (
         <ChartViewerScreen token={token} projects={projects} embedded />

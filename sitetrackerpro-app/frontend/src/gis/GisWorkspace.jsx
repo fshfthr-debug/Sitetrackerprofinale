@@ -170,8 +170,9 @@ function formatCursor(lngLat, crs, crsList) {
   }
 }
 
-export default function GisWorkspace({ token, projects }) {
-  const [projectId, setProjectId] = useState('');
+export default function GisWorkspace({ token, projects, activeProject }) {
+  // The project is chosen once, in the command bar; every panel here follows it.
+  const [projectId, setProjectId] = useState(() => (activeProject?.id ? String(activeProject.id) : ''));
   const [workspaces, setWorkspaces] = useState([]);
   const [workspaceId, setWorkspaceId] = useState('');
   const [workspace, setWorkspace] = useState(null);
@@ -1447,6 +1448,18 @@ export default function GisWorkspace({ token, projects }) {
     }
   };
 
+  const activeProjectId = activeProject?.id ? String(activeProject.id) : '';
+
+  useEffect(() => {
+    setProjectId(activeProjectId);
+  }, [activeProjectId]);
+
+  // A different active project means the selected workspace belongs to the previous one.
+  useEffect(() => {
+    setWorkspaceId('');
+    setWorkspace(null);
+  }, [projectId]);
+
   const project = projects.find(item => String(item.id) === String(projectId));
   const labelFieldsByLayer = useMemo(() => {
     const fields = {};
@@ -1997,46 +2010,6 @@ export default function GisWorkspace({ token, projects }) {
 
   return (
     <div className="gis-studio" data-tool={activeTool} data-theme={theme}>
-      <div className="gis-studio-bar">
-        <div className="studio-project">
-          <Icon name="building" size={13} />
-          <label htmlFor="gis-project-select">Project</label>
-          <select
-            id="gis-project-select"
-            value={projectId}
-            onChange={event => setProjectId(event.target.value)}
-          >
-            <option value="">Select project</option>
-            {projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
-        </div>
-
-        <span className="studio-context">
-          {project ? `${project.name}${workspace ? ` · ${workspace.name}` : ''} · ${layers.length} layer${layers.length === 1 ? '' : 's'} · ${workingCrs}` : 'Choose a project to open its map workspace'}
-        </span>
-
-        <span className="studio-spacer" />
-
-        <button type="button" className={`studio-btn${leftOpen ? ' active' : ''}`} onClick={() => setLeftOpen(value => !value)} title="Layer and asset tree">
-          <Icon name="layers" size={13} /> Layers
-        </button>
-        <button type="button" className={`studio-btn${inspectorOpen ? ' active' : ''}`} onClick={() => setInspectorOpen(value => !value)} title="Property and clash inspector">
-          <Icon name="panel" size={13} /> Inspector
-        </button>
-        <button type="button" className="studio-btn" onClick={fitProject} title="Fit project extent">
-          <Icon name="maximize" size={13} /> Fit
-        </button>
-        <button type="button" className="studio-btn" onClick={openPrintLayout} title="Print layout">
-          <Icon name="file" size={13} /> Print
-        </button>
-        <button type="button" className="studio-btn" onClick={saveView} disabled={savingView}>
-          {savingView ? 'Saving…' : 'Save view'}
-        </button>
-        <button type="button" className={`studio-btn${ethiopiaOpen ? ' active' : ''}`} onClick={() => setEthiopiaOpen(value => !value)}>
-          <Icon name="globe" size={13} /> Ethiopia
-        </button>
-      </div>
-
       <div className="gis-stage">
         {(error || notice || busy || (basemapError && basemapId === 'local')) && (
           <div className="gis-toasts">
@@ -2859,6 +2832,21 @@ export default function GisWorkspace({ token, projects }) {
               <div className="map-badge"><Icon name="compass" size={11} /> <strong>{workingCrs}</strong></div>
             </div>
 
+            <div className="map-hud" role="toolbar" aria-label="Map view controls">
+              <button type="button" className="map-hud-btn" onClick={fitProject} title="Fit project extent (F)">
+                <Icon name="maximize" size={13} /><span>Fit</span>
+              </button>
+              <button type="button" className="map-hud-btn" onClick={saveView} disabled={savingView} title="Save the current map view">
+                <Icon name="check" size={13} /><span>{savingView ? 'Saving…' : 'Save view'}</span>
+              </button>
+              <button type="button" className="map-hud-btn" onClick={openPrintLayout} title="Print layout (P)">
+                <Icon name="file" size={13} /><span>Print</span>
+              </button>
+              <button type="button" className={`map-hud-btn${ethiopiaOpen ? ' active' : ''}`} onClick={() => setEthiopiaOpen(value => !value)} title="Ethiopia coverage">
+                <Icon name="globe" size={13} /><span>Ethiopia</span>
+              </button>
+            </div>
+
             <div
               ref={mapContainer}
               style={{ ...styles.map, height: '100%', border: 0, borderRadius: 0 }}
@@ -2867,6 +2855,18 @@ export default function GisWorkspace({ token, projects }) {
             <button className="icon-btn map-geolocate" onClick={locateMe} title="Locate field position" aria-label="Locate field position">
               <Icon name="locate" size={16} />
             </button>
+
+            {/* The drawers slide fully off the canvas, so their handles live on the map, not inside them. */}
+            {!leftOpen && (
+              <button type="button" className="drawer-tab left" onClick={() => setLeftOpen(true)} aria-label="Open the layer and asset drawer">
+                <Icon name="layers" size={13} /><span>Layers</span>
+              </button>
+            )}
+            {!inspectorOpen && (
+              <button type="button" className="drawer-tab right" onClick={() => setInspectorOpen(true)} aria-label="Open the inspector drawer">
+                <Icon name="panel" size={13} /><span>Inspector</span>
+              </button>
+            )}
 
             {selected && (
               <div className="map-inspector">

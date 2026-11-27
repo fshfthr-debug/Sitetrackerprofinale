@@ -108,7 +108,7 @@ const quantitiesFromPsets = (psets) => {
   return result;
 };
 
-export default function BimViewer({ token, projects = [], projectId }) {
+export default function BimViewer({ token, projects = [], projectId, activeProject }) {
   const hostRef = useRef(null);
   const engineRef = useRef(null);
   const [status, setStatus] = useState('Open an IFC, GLB or glTF file to view the model');
@@ -126,8 +126,15 @@ export default function BimViewer({ token, projects = [], projectId }) {
   const [wireframe, setWireframe] = useState(false);
   const [ghost, setGhost] = useState(false);
   const [edges, setEdges] = useState(false);
-  const [projectIdInput, setProjectIdInput] = useState(projectId ? String(projectId) : '');
+  // One project for the whole app: the one selected in the command bar. The take-off follows it
+  // instead of asking again here.
+  const activeId = activeProject?.id ?? projectId;
+  const [projectIdInput, setProjectIdInput] = useState(activeId ? String(activeId) : '');
   const [sendResult, setSendResult] = useState('');
+
+  useEffect(() => {
+    setProjectIdInput(activeId ? String(activeId) : '');
+  }, [activeId]);
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
@@ -969,8 +976,12 @@ export default function BimViewer({ token, projects = [], projectId }) {
     link.click();
   };
 
+  const takeoffProjectName = activeProject?.name
+    || (projects.find(project => String(project.id) === String(projectIdInput)) || {}).name
+    || '';
+
   const sendToApp = async () => {
-    if (!projectIdInput) { setSendResult('Enter the project ID first.'); return; }
+    if (!projectIdInput) { setSendResult('Choose the active project in the top bar first.'); return; }
     if (!token) { setSendResult('You need to be signed in.'); return; }
     if (takeoff.length === 0) { setSendResult('Nothing to send.'); return; }
     setSending(true);
@@ -986,7 +997,7 @@ export default function BimViewer({ token, projects = [], projectId }) {
       });
       const data = await response.json();
       const saved = data.parsed ? data.parsed.rowsFound : null;
-      setSendResult(response.ok ? `Saved${saved != null ? ` ${saved}` : ''} take-off rows to project ${projectIdInput}.` : `Failed: ${data.error || response.status}`);
+      setSendResult(response.ok ? `Saved${saved != null ? ` ${saved}` : ''} take-off rows to ${takeoffProjectName || `project ${projectIdInput}`}.` : `Failed: ${data.error || response.status}`);
     } catch (sendError) {
       setSendResult(`Failed: ${sendError.message}`);
     } finally {
@@ -1204,25 +1215,11 @@ export default function BimViewer({ token, projects = [], projectId }) {
             <button type="button" style={styles.tool} onClick={downloadCsv}>Download take-off CSV</button>
             <button type="button" style={styles.tool} onClick={sendToApp} disabled={sending}>{sending ? 'Sending…' : 'Send to app'}</button>
           </div>
-          {projects && projects.length > 0 ? (
-            <select
-              value={projectIdInput}
-              onChange={(event) => setProjectIdInput(event.target.value)}
-              style={{ width: '100%', marginTop: '6px', padding: '6px', border: '1px solid #d7dee7', borderRadius: '5px', fontSize: '12px' }}
-            >
-              <option value="">-- Project for the take-off --</option>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>{project.name}</option>
-              ))}
-            </select>
-          ) : (
-            <input
-              value={projectIdInput}
-              onChange={(event) => setProjectIdInput(event.target.value)}
-              placeholder="Project ID"
-              style={{ width: '100%', marginTop: '6px', padding: '6px', border: '1px solid #d7dee7', borderRadius: '5px', fontSize: '12px' }}
-            />
-          )}
+          <p style={{ ...styles.hint, marginTop: '6px' }}>
+            {projectIdInput
+              ? <>Quantities go to <strong>{takeoffProjectName || `project ${projectIdInput}`}</strong>, the active project in the top bar.</>
+              : 'Choose the active project in the top bar to send quantities to it.'}
+          </p>
           {sendResult && <p style={styles.hint}>{sendResult}</p>}
 
           <h4 style={{ ...styles.h4, marginTop: '16px' }}>Measurements</h4>
