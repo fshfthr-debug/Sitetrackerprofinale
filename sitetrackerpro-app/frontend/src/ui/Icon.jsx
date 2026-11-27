@@ -167,7 +167,7 @@ const ICONS = {
   x: X
 };
 
-export default function Icon({ name, size = 16, strokeWidth = 1.7, className = '', ...rest }) {
+export default function Icon({ name, size = 16, strokeWidth = 2.2, className = '', ...rest }) {
   const Glyph = ICONS[name] || Overview;
   return (
     <Glyph
