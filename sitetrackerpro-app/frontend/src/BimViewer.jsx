@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { colourForType, geometryFromPlacedGeometry } from './bim/ifcGeometry';
 import { GLB_BROWSER_LIMIT_BYTES, isGltfFileName, tooLargeMessage } from './bim/gltfFile';
 import { gltfTextureWarning, parseGltfBuffer } from './bim/gltfLoader';
+import { addStageEnvironment } from './bim/stageEnvironment';
 
 // ---------------------------------------------------------------------------
 // BIM viewer built on three.js (MIT) + web-ifc (MPL-2.0).
@@ -147,7 +148,6 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
     if (!host) return undefined;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xeef2f7);
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 5000);
     const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -158,6 +158,10 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
     renderer.domElement.style.width = '100%';
     renderer.domElement.style.height = '100%';
     host.appendChild(renderer.domElement);
+
+    // The model stands on real ground under a daylight dome rather than on a
+    // flat pale fill that reads like an empty CAD viewport.
+    const stage = addStageEnvironment(scene, { renderer });
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -172,7 +176,10 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
     fill.position.set(-25, 20, -30);
     scene.add(fill);
 
-    const grid = new THREE.GridHelper(100, 40, 0xc9d4e0, 0xe4eaf1);
+    const grid = new THREE.GridHelper(100, 40, 0xf2f4e6, 0xf7f8ee);
+    grid.material.transparent = true;
+    grid.material.opacity = 0.24;
+    grid.position.y = 0.01;
     scene.add(grid);
 
     const modelRoot = new THREE.Group();
@@ -183,7 +190,7 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
     measureRoot.add(measureGroup);
 
     const engine = {
-      scene, camera, renderer, controls, modelRoot, measureRoot, measureGroup,
+      scene, camera, renderer, controls, modelRoot, measureRoot, measureGroup, stage,
       elements: [], elementById: new Map(), meshes: [], bbox: null,
       storeys: [], unitScale: 1, api: null, modelID: null,
       visibleStoreys: new Set(), visibleTypes: new Set(),
@@ -245,9 +252,12 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
         depth = Math.max(depth, along + across / tanH, along + vertical / tanV);
       })));
       const distance = Math.max(depth * 1.08, 0.5);
+      stage.setTileSize(Math.max(0.25, box.getSize(new THREE.Vector3()).length() / 3));
       camera.aspect = aspect;
       camera.near = Math.max(distance / 500, 0.01);
-      camera.far = distance + box.getSize(new THREE.Vector3()).length() * 6;
+      // Keep the sky dome and the ground in view: framing a small fixture must not
+      // clip the horizon away and leave the model floating in flat green.
+      camera.far = Math.max(distance + box.getSize(new THREE.Vector3()).length() * 6, 5200);
       camera.position.copy(centre).add(dir.multiplyScalar(distance));
       camera.updateProjectionMatrix();
       controls.target.copy(centre);
@@ -394,6 +404,7 @@ export default function BimViewer({ token, projects = [], projectId, activeProje
       renderer.setAnimationLoop(null);
       observer.disconnect();
       controls.dispose();
+      stage.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === host) host.removeChild(renderer.domElement);
       if (engine.api && engine.modelID != null) {

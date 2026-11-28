@@ -9,6 +9,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls';
 import { buildCsv, downloadCsv, safeFilePart, todayStamp } from './csv';
 import { CONTROL_POINT_STATUSES, INITIAL_CONTROL_POINT_STATUSES, parseControlPointText, statusLabel } from './controlPoints';
 import { loadTwinModelWithConversion, twinModelKind, twinModelUrl } from './bim/twinModel';
+import { addStageEnvironment } from './bim/stageEnvironment';
 import moduleGisPhoto from './assets/module-gis.jpg';
 import moduleBimPhoto from './assets/module-bim.jpg';
 import moduleSurveyPhoto from './assets/module-survey.jpg';
@@ -4031,7 +4032,6 @@ function ChartViewerScreen({ token, projects, activeProject, embedded = false, s
     if (!mount || (rows.length === 0 && !hasTerrain && !showModel)) return undefined;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xeef2f7);
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 5000);
 
@@ -4041,6 +4041,10 @@ function ChartViewerScreen({ token, projects, activeProject, embedded = false, s
     renderer.domElement.style.display = 'block';
     renderer.domElement.style.borderRadius = '0';
     mount.appendChild(renderer.domElement);
+
+    // Real ground and sky: models sit on grass and soil under a daylight dome
+    // instead of on a flat pale fill.
+    const stage = addStageEnvironment(scene, { renderer });
 
     scene.add(new THREE.HemisphereLight(0xfffbf4, 0xa9a294, 1.08));
     const sun = new THREE.DirectionalLight(0xffffff, 0.85);
@@ -4098,7 +4102,11 @@ function ChartViewerScreen({ token, projects, activeProject, embedded = false, s
     scene.add(blocks);
 
     const span = Math.max(12, phaseNames.length * spacing, Math.max(...phaseNames.map(p => byPhase[p].length)) * spacing);
-    const grid = new THREE.GridHelper(span * 1.6, 12, 0xbfc9d6, 0xdde4ec);
+    stage.setTileSize(Math.max(2, span / 4));
+    const grid = new THREE.GridHelper(span * 1.6, 12, 0xf2f4e6, 0xf7f8ee);
+    grid.material.transparent = true;
+    grid.material.opacity = 0.28;
+    grid.position.y = 0.01;
     scene.add(grid);
 
     // Optional DEM layer: one mesh built from the preview grid. Heights are scaled from the real
@@ -4296,6 +4304,7 @@ function ChartViewerScreen({ token, projects, activeProject, embedded = false, s
         terrainMeshRef.current.material.dispose();
         terrainMeshRef.current = null;
       }
+      stage.dispose();
       if (renderer.domElement.parentNode === mount) mount.removeChild(renderer.domElement);
       renderer.dispose();
     };
