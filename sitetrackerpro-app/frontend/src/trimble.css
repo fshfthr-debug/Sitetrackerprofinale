@@ -699,3 +699,119 @@ textarea:focus-visible {
   .module-tiles { grid-template-columns: minmax(0, 1fr); }
   .module-tile-media { aspect-ratio: 16 / 9; }
 }
+
+/* ------------------------------------------------------- Site AI chat bot --- */
+
+/* The assistant is a chat bot in the bottom-right corner: a launcher with a
+   greeting bubble when it is closed, and a compact panel docked above the
+   launcher when it is open. No backdrop, so the workspace stays usable. */
+
+.ai-launcher-wrap {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 360;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ai-launcher-bubble {
+  max-width: 220px;
+  padding: 9px 13px;
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--line-strong);
+  border-radius: 14px 14px 4px 14px;
+  box-shadow: var(--shadow-md);
+}
+
+.ai-launcher {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  flex: none;
+  border-radius: 50%;
+  border: 1px solid rgba(57, 217, 138, 0.5);
+  background: radial-gradient(circle at 32% 28%, var(--cerulean-400), var(--cerulean-600) 72%);
+  color: #04212f;
+  cursor: pointer;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45), 0 0 0 7px rgba(57, 217, 138, 0.1);
+  transition: transform 180ms var(--ease), box-shadow 180ms var(--ease);
+}
+
+.ai-launcher:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 44px rgba(0, 0, 0, 0.5), 0 0 0 9px rgba(57, 217, 138, 0.14);
+}
+
+.ai-launcher:focus-visible { outline: 2px solid var(--copper-strong); outline-offset: 3px; }
+
+.drawer.drawer--chat {
+  top: auto;
+  right: 20px;
+  bottom: 92px;
+  width: 384px;
+  height: min(620px, calc(100vh - 150px));
+  border-radius: var(--radius-lg);
+  animation: chat-in 200ms var(--ease) both;
+}
+
+@keyframes chat-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.ai-greeting {
+  display: flex;
+  gap: 10px;
+  padding: 12px 13px;
+  margin-bottom: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.ai-greeting-avatar {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--copper-soft);
+  color: var(--copper);
+  border: 1px solid rgba(57, 217, 138, 0.35);
+}
+
+.ai-greeting-copy strong {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 14px;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.ai-greeting-copy p {
+  margin: 3px 0 0;
+  color: var(--ink-3);
+  font-size: var(--text-data);
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .ai-launcher-wrap { right: 12px; bottom: 78px; }
+  .ai-launcher-bubble { display: none; }
+  .drawer.drawer--chat {
+    right: 8px;
+    left: 8px;
+    bottom: 76px;
+    width: auto;
+    height: min(72vh, 560px);
+  }
+}

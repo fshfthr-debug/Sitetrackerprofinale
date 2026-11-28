@@ -217,6 +217,15 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
   const threadRef = useRef(null);
   const project = activeProject || projects[0] || null;
 
+  // Escape closes the chat. There is no backdrop any more, so the workspace
+  // stays usable behind it and the keyboard still has a way out.
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = event => { if (event.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
   useEffect(() => {
     if (!open || !token) return;
     let cancelled = false;
@@ -331,8 +340,7 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
 
   return (
     <>
-      <div className="overlay" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }} />
-      <aside className="drawer" role="dialog" aria-modal="true" aria-label="Site AI assistant">
+      <aside className="drawer drawer--chat" role="dialog" aria-label="Site AI assistant">
         <div className="drawer-head">
           <div className="brand-mark brand-mark--vector" style={{ width: 34, height: 34, borderRadius: 10 }}>
             <BrandMark />
@@ -345,6 +353,14 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
         </div>
 
         <div className="drawer-body" ref={threadRef}>
+          <div className="ai-greeting">
+            <span className="ai-greeting-avatar"><Icon name="sparkles" size={15} /></span>
+            <div className="ai-greeting-copy">
+              <strong>What can I help you with?</strong>
+              <p>Ask about progress, quantities, risk, a take-off or the records behind them.</p>
+            </div>
+          </div>
+
           <div className="ai-context">
             <div className="ai-context-label"><Icon name="sparkles" size={12} /> Operational context</div>
             <p>{project ? `${project.name} is active. Ask for progress, quantities, risk or an engineering take-off.` : 'No project is active yet. Ask about the workspace or create your first project.'}</p>
@@ -591,6 +607,21 @@ export default function AppShell({
           Site AI
         </button>
       </nav>
+
+      {!aiOpen && (
+        <div className="ai-launcher-wrap">
+          <div className="ai-launcher-bubble" role="status">What can I help you with?</div>
+          <button
+            type="button"
+            className="ai-launcher"
+            onClick={() => setAiOpen(true)}
+            aria-label="Open Site AI chat"
+            title="Site AI (Ctrl+J)"
+          >
+            <Icon name="sparkles" size={22} />
+          </button>
+        </div>
+      )}
 
       <CommandPalette
         open={commandOpen}

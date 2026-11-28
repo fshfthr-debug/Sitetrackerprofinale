@@ -116,6 +116,9 @@ export default function CommandBar({
 }) {
   const [role, setRole] = useState('');
   const [menu, setMenu] = useState(null);
+  // How the open menu got there: a hover may be undone by a click (which should
+  // open it, not toggle it shut), a click may be toggled shut by the next click.
+  const menuSource = useRef(null);
   const [profileOpen, setProfileOpen] = useState(false);
   const [basemapOpen, setBasemapOpen] = useState(false);
   const [modulesOpen, setModulesOpen] = useState(false);
@@ -135,12 +138,14 @@ export default function CommandBar({
     if (menu) {
       clearTimeout(hoverOpen.current);
       setMenu(label);
+      menuSource.current = 'hover';
       setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false);
       return;
     }
     clearTimeout(hoverOpen.current);
     hoverOpen.current = window.setTimeout(() => {
       setMenu(label);
+      menuSource.current = 'hover';
       setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false);
     }, HOVER_OPEN_MS);
   };
@@ -408,7 +413,12 @@ export default function CommandBar({
                 className={`cmd-menu-trigger${menu === group.label ? ' open' : ''}`}
                 aria-haspopup="menu"
                 aria-expanded={menu === group.label}
-                onClick={() => { setMenu(menu === group.label ? null : group.label); setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false); }}
+                onClick={() => {
+                  const clickedOpen = menu === group.label && menuSource.current === 'click';
+                  setMenu(clickedOpen ? null : group.label);
+                  menuSource.current = clickedOpen ? null : 'click';
+                  setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false);
+                }}
                 onMouseEnter={() => hoverTrigger(group.label)}
                 onMouseLeave={() => clearTimeout(hoverOpen.current)}
               >
