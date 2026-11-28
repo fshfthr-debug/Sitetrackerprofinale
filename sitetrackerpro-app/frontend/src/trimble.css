@@ -841,3 +841,10 @@ textarea:focus-visible {
   object-fit: contain;
   border-radius: inherit;
 }
+
+/* The icon-only cut has no ribbon to clear, so it can sit closer to the tile
+   edge and read larger at 28px. The full lockup keeps its 3px inset. */
+.brand-mark.brand-mark--icon,
+.cmdbar-mark.cmdbar-mark--icon {
+  padding: 1px;
+}

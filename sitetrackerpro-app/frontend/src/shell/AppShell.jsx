@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Icon from '../ui/Icon';
 import BrandMark from '../icons/logo-mark';
+import LogoIcon from '../icons/logo-icon';
 import FeatureGuidePopup from '../ui/FeatureGuidePopup';
 import { answerQuestion } from '../ai/siteAi';
 import { buildHostedContext, conversationForModel, draftFromAnswer, shouldUseHostedAi } from '../ai/hosted';
@@ -342,8 +343,8 @@ function IntelligenceDock({ open, onClose, token, projects, activeProject, onNav
     <>
       <aside className="drawer drawer--chat" role="dialog" aria-label="Site AI assistant">
         <div className="drawer-head">
-          <div className="brand-mark brand-mark--vector" style={{ width: 34, height: 34, borderRadius: 10 }}>
-            <BrandMark />
+          <div className="brand-mark brand-mark--vector brand-mark--icon" style={{ width: 34, height: 34, borderRadius: 10 }}>
+            <LogoIcon />
           </div>
           <div className="drawer-head-copy">
             <h3>Site AI</h3>

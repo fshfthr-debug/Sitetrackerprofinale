@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Icon from '../ui/Icon';
-import BrandMark from '../icons/logo-mark';
+import LogoIcon from '../icons/logo-icon';
 import { BASEMAP_CHOICES } from '../gis/basemaps';
 import { getWorkspaceSettings, sendGisCommand, updateWorkspaceSettings } from './workspaceSettings';
 
@@ -337,7 +337,7 @@ export default function CommandBar({
       <div className="cmdbar-tier cmdbar-tier--title">
       <div className="cmdbar-left">
         <button type="button" className="cmdbar-brand" onClick={() => navigate('dashboard')} aria-label="SiteTrackerPro overview">
-          <span className="cmdbar-mark cmdbar-mark--vector"><BrandMark /></span>
+          <span className="cmdbar-mark cmdbar-mark--vector cmdbar-mark--icon"><LogoIcon /></span>
           <span className="cmdbar-word">SiteTracker<span>Pro</span></span>
         </button>
 
