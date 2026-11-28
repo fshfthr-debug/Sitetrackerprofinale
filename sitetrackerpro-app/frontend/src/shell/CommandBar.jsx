@@ -121,6 +121,31 @@ export default function CommandBar({
   const [modulesOpen, setModulesOpen] = useState(false);
   const [basemap, setBasemap] = useState(() => getWorkspaceSettings().basemap);
   const rootRef = useRef(null);
+  const hoverOpen = useRef(null);
+
+  // Hover intent for the menu bar: a short pause opens a menu, and sliding from
+  // one trigger to the next switches immediately once a menu is open. The open
+  // menu then stays until a click elsewhere or Escape, like a desktop menu bar.
+  const HOVER_OPEN_MS = 260;
+
+  const cancelHover = () => clearTimeout(hoverOpen.current);
+
+  const hoverTrigger = (label) => {
+    if (menu === label) { clearTimeout(hoverOpen.current); return; }
+    if (menu) {
+      clearTimeout(hoverOpen.current);
+      setMenu(label);
+      setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false);
+      return;
+    }
+    clearTimeout(hoverOpen.current);
+    hoverOpen.current = window.setTimeout(() => {
+      setMenu(label);
+      setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false);
+    }, HOVER_OPEN_MS);
+  };
+
+  useEffect(() => cancelHover, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -384,6 +409,8 @@ export default function CommandBar({
                 aria-haspopup="menu"
                 aria-expanded={menu === group.label}
                 onClick={() => { setMenu(menu === group.label ? null : group.label); setProfileOpen(false); setBasemapOpen(false); setModulesOpen(false); }}
+                onMouseEnter={() => hoverTrigger(group.label)}
+                onMouseLeave={() => clearTimeout(hoverOpen.current)}
               >
                 {group.label}
               </button>
