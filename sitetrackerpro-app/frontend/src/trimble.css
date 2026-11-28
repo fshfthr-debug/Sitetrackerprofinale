@@ -31,9 +31,18 @@ body {
 /* ---------------------------------------------------------------- typography */
 
 .page-title {
+  font-family: var(--font-display);
   font-size: var(--text-workspace);
-  font-weight: var(--weight-heading);
-  letter-spacing: -0.015em;
+  font-weight: 700;
+  letter-spacing: -0.022em;
+}
+
+/* TIMONA sets every heading in Space Grotesk with tight tracking. */
+.panel-title,
+.section-title,
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  letter-spacing: -0.018em;
 }
 
 .page-sub { font-size: var(--text-ui); line-height: 1.5; color: var(--ink-3); }
@@ -61,10 +70,10 @@ body {
 .brand { padding: 0 8px 20px; }
 
 .brand-mark {
-  background: #ffffff;
-  border: 1px solid var(--line);
+  background: linear-gradient(160deg, #0f323b, #071a20);
+  border: 1px solid rgba(57, 217, 138, 0.35);
   border-radius: var(--radius-sm);
-  box-shadow: none;
+  box-shadow: 0 10px 28px -14px rgba(57, 217, 138, 0.6);
 }
 
 .brand-word { color: var(--ink); font-weight: 700; }
@@ -126,7 +135,7 @@ body {
 .nav-item:hover .nav-icon { color: var(--copper); }
 
 .nav-badge {
-  color: #ffffff;
+  color: #04212f;
   background: var(--copper);
 }
 
@@ -134,7 +143,7 @@ body {
 .sidebar-logout { color: var(--ink-3); }
 
 .topbar {
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(8, 24, 30, 0.9);
   border-bottom: 1px solid var(--line);
   backdrop-filter: blur(10px) saturate(1.05);
 }
@@ -151,26 +160,36 @@ body {
 
 .btn {
   min-height: 36px;
-  padding: 0 14px;
+  padding: 0 18px;
+  font-family: var(--font-display);
   font-size: var(--text-nav);
-  font-weight: var(--weight-heading);
-  border-radius: var(--radius-sm);
+  font-weight: 600;
+  border-radius: 999px;
   box-shadow: none;
 }
 
 .btn:hover { transform: none; border-color: var(--line-strong); box-shadow: none; }
 
 .btn-primary {
-  color: #ffffff;
+  color: #04212f;
   background: var(--copper);
   border-color: var(--copper);
 }
 
 .btn-primary:hover {
-  color: #ffffff;
-  background: var(--copper-strong);
-  border-color: var(--copper-strong);
+  color: #04212f;
+  background: var(--copper-bright);
+  border-color: var(--copper-bright);
+  transform: translateY(-1px);
 }
+
+.btn-ghost {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.02);
+  border-color: var(--line-strong);
+}
+
+.btn-ghost:hover { color: var(--copper-strong); border-color: var(--copper); }
 
 /* A disabled action reads as unavailable, not as a faint blue button. */
 .btn:disabled,
@@ -189,7 +208,7 @@ body {
   border-color: var(--line);
 }
 
-.btn-copper { color: #ffffff; }
+.btn-copper { color: #04212f; }
 .btn-sm { min-height: 30px; font-size: var(--text-data); }
 
 .input, input[type="text"], input[type="email"], input[type="password"],
@@ -210,7 +229,9 @@ textarea:focus-visible {
 /* The app's real chrome is the ribbon-style command bar, not the sidebar. */
 
 .cmdbar {
-  background: var(--surface);
+  background:
+    radial-gradient(560px 140px at 0% 0%, rgba(57, 217, 138, 0.1), transparent 72%),
+    var(--surface);
   color: var(--ink);
   border-bottom: 1px solid var(--line);
   box-shadow: none;
@@ -224,9 +245,10 @@ textarea:focus-visible {
 }
 
 .cmdbar-mark {
-  background: #ffffff;
-  border: 1px solid var(--line);
+  background: linear-gradient(160deg, #0f323b, #071a20);
+  border: 1px solid rgba(57, 217, 138, 0.35);
   border-radius: var(--radius-sm);
+  box-shadow: 0 10px 28px -14px rgba(57, 217, 138, 0.6);
 }
 
 .cmdbar-word { color: var(--ink); }
@@ -363,16 +385,16 @@ textarea:focus-visible {
   background: var(--surface);
   border-color: var(--line);
   border-radius: var(--radius-md);
-  box-shadow: 0 12px 32px rgba(10, 24, 38, 0.16), 0 1px 2px rgba(10, 24, 38, 0.08);
+  box-shadow: var(--shadow-sm);
 }
 
 /* ---------------------------------------------------------------- surfaces */
 
 .panel {
-  background: var(--surface);
+  background: linear-gradient(180deg, var(--surface), var(--surface-2));
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
 }
 
 .panel-head { padding: 16px 18px; }
@@ -384,10 +406,10 @@ textarea:focus-visible {
 .panel-action { color: var(--copper); }
 
 .kpi {
-  background: var(--surface);
+  background: linear-gradient(170deg, var(--surface-2), var(--surface));
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  box-shadow: none;
+  box-shadow: var(--shadow-sm);
 }
 
 /* The old corner glow was copper; a construction dashboard reads cleaner flat. */
@@ -404,14 +426,14 @@ textarea:focus-visible {
 }
 
 .twin-stage .viewer-surface {
-  background: radial-gradient(620px 320px at 50% 0%, var(--white), var(--surface-3) 72%);
+  background: radial-gradient(620px 320px at 50% 0%, var(--surface-3), var(--canvas-deep) 72%);
 }
 
 .twin-label, .viewer-badge { border-radius: var(--radius-sm); }
 
 .twin-view-toggle {
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  background: rgba(8, 24, 30, 0.88);
   border-color: var(--line);
 }
 

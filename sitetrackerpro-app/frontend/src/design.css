@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Inter:wght@400;450;500;550;600;650;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@300;400;450;500;550;600;650;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
 @import './workstation.css';
 
 /* ==========================================================================
@@ -16,144 +16,153 @@
    so a component never needs its own colour value. trimble.css and
    workstation.css consume these tokens only; they no longer redefine colours.
    -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   SiteTrackerPro colour system — the single source of truth.
+
+   Matched to the TIMONA Geospatial language: near-black teal ground, layered
+   teal surfaces, a mint signal for action and focus, and warm sand for
+   highlights. Every token below is an alias of that palette, so a component
+   never needs its own colour value. trimble.css and workstation.css consume
+   these tokens only.
+   -------------------------------------------------------------------------- */
 :root {
-  /* Brand: deep navy */
-  --navy-900: #061826;
-  --navy-800: #0a2335;
-  --navy-700: #0a2a40;
-  --navy-600: #0e334d;
-  --navy-500: #154363;
-  --navy-400: #1d547a;
+  /* Ground and structure */
+  --navy-900: #050f13;
+  --navy-800: #08181e;
+  --navy-700: #0b2129;
+  --navy-600: #0e2a33;
+  --navy-500: #123540;
+  --navy-400: #174450;
 
-  /* Secondary: bright sky / cerulean */
-  --cerulean-100: #dcecf7;
-  --cerulean-200: #bcdff2;
-  --cerulean-300: #9ccdf0;
-  --cerulean-400: #63b8e8;
-  --cerulean-500: #1a86c9;
-  --cerulean-600: #0a6fae;
-  --cerulean-700: #0b5d8f;
+  /* Mint signal */
+  --cerulean-100: #d9fbec;
+  --cerulean-200: #b6f7d9;
+  --cerulean-300: #8ff0bd;
+  --cerulean-400: #5fe3a3;
+  --cerulean-500: #39d98a;
+  --cerulean-600: #2bb877;
+  --cerulean-700: #1f9663;
 
-  /* Accent: warm gold / amber */
-  --gold-100: #fdf3dd;
-  --gold-200: #fbe6b8;
-  --gold-400: #ffc24a;
-  --gold-500: #f5a800;
-  --gold-600: #c98200;
-  --gold-700: #a4610f;
+  /* Warm sand highlight */
+  --gold-100: #fff0de;
+  --gold-200: #ffdcb8;
+  --gold-400: #ffb86b;
+  --gold-500: #ffa53f;
+  --gold-600: #e8892a;
+  --gold-700: #c46f1c;
 
-  /* Neutrals: crisp white and cool paper */
+  /* Neutrals: white for marks on dark, cool greys for type */
   --white: #ffffff;
-  --paper-50: #fbfcfd;
-  --paper-100: #f4f6f8;
-  --paper-200: #f6f8fa;
-  --paper-300: #edf1f4;
-  --paper-400: #e0e5ea;
-  --paper-500: #c7d0d7;
-  --paper-600: #aab6c0;
-  --slate-900: #101a24;
-  --slate-800: #16191c;
-  --slate-700: #3b4248;
-  --slate-600: #4b545c;
-  --slate-500: #5f676e;
-  --slate-400: #848c93;
+  --paper-50: #07161b;
+  --paper-100: #050f13;
+  --paper-200: #0e2a33;
+  --paper-300: #123540;
+  --paper-400: rgba(140, 190, 200, 0.14);
+  --paper-500: rgba(140, 190, 200, 0.3);
+  --paper-600: rgba(140, 190, 200, 0.42);
+
+  --slate-900: #eef7f7;
+  --slate-800: #e9f2f2;
+  --slate-700: #c9dde0;
+  --slate-600: #b3c9cd;
+  --slate-500: #9db3ba;
+  --slate-400: #8398a0;
 
   /* Status */
-  --success: #167a5b;
-  --success-strong: #10624a;
-  --success-soft: #e3f2ec;
-  --warning: #a4610f;
-  --warning-soft: #fbf0dc;
-  --error: #a8352c;
-  --error-soft: #fbe9e7;
-  --info: #0b6f96;
-  --info-soft: #e4f0f6;
-  --violet: #5b4b86;
-  --violet-soft: #eeeaf7;
+  --success: #39d98a;
+  --success-strong: #8ff0bd;
+  --success-soft: rgba(57, 217, 138, 0.12);
+  --warning: #ffb86b;
+  --warning-soft: rgba(255, 184, 107, 0.12);
+  --error: #ff7b72;
+  --error-soft: rgba(255, 123, 114, 0.12);
+  --info: #7fd4f0;
+  --info-soft: rgba(127, 212, 240, 0.12);
+  --violet: #c0a8ff;
+  --violet-soft: rgba(192, 168, 255, 0.12);
 
-  /* RGB triples for translucent washes: rgb(var(--accent-rgb) / 0.18) */
-  --accent-rgb: 26 134 201;
-  --navy-rgb: 10 42 64;
-  --gold-rgb: 245 168 0;
+  /* RGB triples for translucent washes */
+  --accent-rgb: 57 217 138;
+  --navy-rgb: 5 15 19;
+  --gold-rgb: 255 184 107;
 
-  /* Dark GIS chrome (command bar, glass panels, dock, telemetry) */
-  --chrome: #0a2335;
-  --chrome-2: #071a2b;
-  --chrome-3: #0e334d;
-  --chrome-deep: #05131f;
-  --chrome-ink: #eaf1f6;
-  --chrome-ink-2: #c2d2de;
-  --chrome-ink-3: #8fa4b4;
-  --chrome-line: rgba(255, 255, 255, 0.12);
-  --chrome-glass: rgba(8, 31, 48, 0.84);
-  --chrome-danger: #ff9b90;
-  --chrome-success: #7fd3b2;
-  --chrome-warning: #ffc24a;
+  /* GIS chrome (command bar, glass panels, dock, telemetry) */
+  --chrome: #050f13;
+  --chrome-2: #08181e;
+  --chrome-3: #0b2129;
+  --chrome-deep: #03090c;
+  --chrome-ink: #e9f2f2;
+  --chrome-ink-2: #c9dde0;
+  --chrome-ink-3: #9db3ba;
+  --chrome-line: rgba(140, 190, 200, 0.16);
+  --chrome-glass: rgba(8, 24, 30, 0.84);
+  --chrome-danger: #ff8b82;
+  --chrome-success: #7fe6b4;
+  --chrome-warning: #ffc98f;
 
   /* ---- Component tokens: aliases of the palette above (do not hardcode) ---- */
-  --canvas: var(--paper-100);
-  --canvas-deep: #e9edf1;
-  --surface: var(--white);
-  --surface-2: var(--paper-200);
-  --surface-3: var(--paper-300);
-  --surface-raised: var(--white);
+  --canvas: #050f13;
+  --canvas-deep: #08181e;
+  --surface: #0b2129;
+  --surface-2: #0e2a33;
+  --surface-3: #123540;
+  --surface-raised: #0e2a33;
 
-  --ink: var(--slate-800);
-  --ink-2: var(--slate-700);
-  --ink-3: var(--slate-500);
-  --muted: var(--slate-400);
+  --ink: #e9f2f2;
+  --ink-2: #c9dde0;
+  --ink-3: #9db3ba;
+  --muted: #8398a0;
 
-  --line: var(--paper-400);
-  --line-strong: var(--paper-500);
+  --line: rgba(140, 190, 200, 0.14);
+  --line-strong: rgba(140, 190, 200, 0.3);
 
-  --basalt: var(--navy-700);
-  --basalt-2: var(--navy-600);
-  --basalt-3: var(--navy-500);
-  --basalt-4: var(--navy-400);
+  --basalt: #123540;
+  --basalt-2: #174450;
+  --basalt-3: #1c5262;
+  --basalt-4: #2a6a7c;
 
-  /* The action colour: cerulean reads as selection and focus everywhere. */
-  --copper: var(--cerulean-500);
-  --copper-strong: var(--navy-500);
-  --copper-bright: var(--cerulean-500);
-  --copper-soft: #e6f2fa;
+  /* The action colour: mint reads as selection and focus everywhere. */
+  --copper: #39d98a;
+  --copper-strong: #8ff0bd;
+  --copper-bright: #54e79c;
+  --copper-soft: rgba(57, 217, 138, 0.12);
 
-  --signal: var(--success);
-  --signal-strong: var(--success-strong);
-  --signal-soft: var(--success-soft);
-  --amber: var(--warning);
-  --amber-bright: var(--gold-500);
-  --amber-soft: var(--warning-soft);
-  --danger: var(--error);
-  --danger-soft: var(--error-soft);
-  --sky: var(--info);
-  --sky-soft: var(--info-soft);
+  --signal: #39d98a;
+  --signal-strong: #8ff0bd;
+  --signal-soft: rgba(57, 217, 138, 0.12);
+  --amber: #ffb86b;
+  --amber-bright: #ffb86b;
+  --amber-soft: rgba(255, 184, 107, 0.12);
+  --danger: #ff7b72;
+  --danger-soft: rgba(255, 123, 114, 0.12);
+  --sky: #7fd4f0;
+  --sky-soft: rgba(127, 212, 240, 0.12);
 
-  --shadow-xs: 0 1px 2px rgba(10, 24, 38, 0.05);
-  --shadow-sm: 0 2px 8px rgba(10, 24, 38, 0.06), 0 1px 2px rgba(10, 24, 38, 0.05);
-  --shadow-md: 0 12px 32px rgba(10, 24, 38, 0.1), 0 2px 8px rgba(10, 24, 38, 0.05);
-  --shadow-lg: 0 32px 80px rgba(6, 24, 38, 0.2), 0 8px 24px rgba(6, 24, 38, 0.12);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-sm: 0 4px 14px rgba(0, 0, 0, 0.32);
+  --shadow-md: 0 18px 40px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 32px 80px rgba(0, 0, 0, 0.55);
 
-  /* Engineering typography: IBM Plex Sans for the interface, IBM Plex Mono for
-     every measured value, coordinate and quantity. */
-  --font-sans: 'IBM Plex Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-display: 'IBM Plex Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  /* Typography: Space Grotesk headings, Inter interface, Plex Mono for values */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-display: 'Space Grotesk', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'IBM Plex Mono', 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace;
 
   --lh-ui: 1.5;
-  --text-ui: 14px;       /* body copy and form values */
-  --text-nav: 13px;      /* navigation, tabs, toolbars, menus */
-  --text-panel: 15px;    /* panel and card headings */
-  --text-heading: 16px;  /* section headings */
-  --text-workspace: 20px;/* workspace / page headings */
-  --text-data: 12px;     /* tables, telemetry, coordinates */
-  --text-micro: 11px;    /* keys, badges, eyebrow labels */
+  --text-ui: 14px;
+  --text-nav: 13px;
+  --text-panel: 15px;
+  --text-heading: 16px;
+  --text-workspace: 20px;
+  --text-data: 12px;
+  --text-micro: 11px;
   --weight-nav: 500;
   --weight-heading: 600;
 
-  --radius-xs: 6px;
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
   --radius-xl: 22px;
 
   --sidebar-w: 252px;
@@ -167,7 +176,7 @@
 
 html {
   background: var(--canvas);
-  color-scheme: light;
+  color-scheme: dark;
   scroll-behavior: smooth;
 }
 
@@ -175,7 +184,8 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(1200px 600px at 88% -10%, rgb(var(--accent-rgb) / 0.06), transparent 62%),
+    radial-gradient(1000px 620px at 82% -8%, rgba(57, 217, 138, 0.1), transparent 62%),
+    radial-gradient(760px 520px at 4% 96%, rgba(255, 184, 107, 0.06), transparent 60%),
     var(--canvas);
   color: var(--ink);
   font-family: var(--font-sans);
