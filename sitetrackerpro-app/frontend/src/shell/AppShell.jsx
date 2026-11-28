@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import Icon from '../ui/Icon';
-import { ReactComponent as BrandMark } from '../icons/brand-mark.svg';
+import BrandMark from '../icons/logo-mark';
 import FeatureGuidePopup from '../ui/FeatureGuidePopup';
 import { answerQuestion } from '../ai/siteAi';
 import { buildHostedContext, conversationForModel, draftFromAnswer, shouldUseHostedAi } from '../ai/hosted';
